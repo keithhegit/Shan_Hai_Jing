@@ -21,6 +21,9 @@ export default class InputManager {
       q: false,
       e: false,
       r: false,
+      f: false,
+      b: false,
+      h: false,
     }
 
     // 鼠标按键状态
@@ -148,6 +151,24 @@ export default class InputManager {
           emitter.emit('input:quick_return')
         }
         this.keys.r = isPressed
+        break
+      case 'f':
+        if (isPressed && !this.keys.f) {
+          emitter.emit('input:grab_pet')
+        }
+        this.keys.f = isPressed
+        break
+      case 'b':
+        if (isPressed && !this.keys.b) {
+          emitter.emit('input:toggle_backpack')
+        }
+        this.keys.b = isPressed
+        break
+      case 'h':
+        if (isPressed && !this.keys.h) {
+          emitter.emit('input:toggle_warehouse')
+        }
+        this.keys.h = isPressed
         break
     }
 

@@ -18,6 +18,8 @@ const dungeonProgress = ref(null)
 const dungeonToast = ref(null)
 let dungeonToastTimer = null
 const lockState = ref(null)
+const inventoryPanel = ref(null)
+const inventoryData = ref({ panel: null, backpack: {}, warehouse: {} })
 
 function onPortalPrompt(payload) {
   portalPrompt.value = payload
@@ -88,8 +90,59 @@ function closeInteractableModal() {
   emitter.emit('interactable:close', { id })
 }
 
+function triggerInteractableAction(actionId) {
+  if (!interactableModal.value || !actionId)
+    return
+  const id = interactableModal.value.id
+  emitter.emit('interactable:action', { id, action: actionId })
+  closeInteractableModal()
+}
+
+function onInventoryOpen(payload) {
+  inventoryPanel.value = payload?.panel || 'backpack'
+}
+
+function onInventoryCloseUi() {
+  inventoryPanel.value = null
+}
+
+function onInventoryUpdate(payload) {
+  inventoryData.value = payload || { panel: inventoryPanel.value, backpack: {}, warehouse: {} }
+  if (payload?.panel)
+    inventoryPanel.value = payload.panel
+}
+
+function closeInventoryPanel() {
+  if (!inventoryPanel.value)
+    return
+  emitter.emit('inventory:close')
+}
+
+function transferItem(from, to, itemId, amount = 1) {
+  if (!from || !to || !itemId)
+    return
+  emitter.emit('inventory:transfer', { from, to, itemId, amount })
+}
+
+function bagEntries(bag) {
+  return Object.entries(bag || {})
+    .map(([id, count]) => ({ id, count }))
+    .filter(row => Number.isFinite(Number(row.count)) && Number(row.count) > 0)
+    .sort((a, b) => a.id.localeCompare(b.id))
+}
+
+function itemLabel(id) {
+  if (id === 'fence')
+    return 'Fence'
+  return id
+}
+
 function onKeyDown(event) {
   const key = event.key?.toLowerCase?.() ?? event.key
+  if (inventoryPanel.value && key === 'escape') {
+    closeInventoryPanel()
+    return
+  }
   if (key === 'escape' || (key === 'e' && interactableModal.value))
     closeInteractableModal()
 }
@@ -114,6 +167,9 @@ onMounted(() => {
   emitter.on('dungeon:toast_clear', onDungeonToastClear)
   emitter.on('combat:lock', onCombatLock)
   emitter.on('combat:lock_clear', onCombatLockClear)
+  emitter.on('inventory:open', onInventoryOpen)
+  emitter.on('inventory:close_ui', onInventoryCloseUi)
+  emitter.on('inventory:update', onInventoryUpdate)
   window.addEventListener('keydown', onKeyDown)
 })
 
@@ -131,6 +187,9 @@ onBeforeUnmount(() => {
   emitter.off('dungeon:toast_clear', onDungeonToastClear)
   emitter.off('combat:lock', onCombatLock)
   emitter.off('combat:lock_clear', onCombatLockClear)
+  emitter.off('inventory:open', onInventoryOpen)
+  emitter.off('inventory:close_ui', onInventoryCloseUi)
+  emitter.off('inventory:update', onInventoryUpdate)
   onDungeonToastClear()
   window.removeEventListener('keydown', onKeyDown)
   experience?.destroy()
@@ -217,6 +276,15 @@ onBeforeUnmount(() => {
           <div class="flex justify-between">
             <span>Tab</span> <span>切换镜头左右</span>
           </div>
+          <div class="flex justify-between">
+            <span>F</span> <span>抓取 / 放下灵兽</span>
+          </div>
+          <div class="flex justify-between">
+            <span>右键</span> <span>投掷灵兽</span>
+          </div>
+          <div class="flex justify-between">
+            <span>B / H</span> <span>背包 / 仓库</span>
+          </div>
         </div>
       </div>
     </div>
@@ -240,6 +308,104 @@ onBeforeUnmount(() => {
         </div>
         <div class="mt-3 text-sm leading-relaxed opacity-95 drop-shadow">
           {{ interactableModal.description }}
+        </div>
+        <div v-if="interactableModal.actions && interactableModal.actions.length" class="mt-4 flex flex-wrap gap-3">
+          <button
+            v-for="action in interactableModal.actions"
+            :key="action.id"
+            class="rounded-xl border border-white/20 bg-white/20 px-4 py-2 text-sm font-semibold text-white hover:bg-white/25"
+            @click="triggerInteractableAction(action.id)"
+          >
+            {{ action.label }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="inventoryPanel && !interactableModal && !loadingState"
+      class="absolute inset-0 z-[11000] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      @click.self="closeInventoryPanel"
+    >
+      <div class="w-full max-w-[860px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+        <div class="flex items-start justify-between gap-4">
+          <div class="text-lg font-semibold drop-shadow">
+            {{ inventoryPanel === 'warehouse' ? '仓库' : '背包' }}
+          </div>
+          <button
+            class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+            @click="closeInventoryPanel"
+          >
+            关闭 (ESC/B/H)
+          </button>
+        </div>
+
+        <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="rounded-2xl border border-white/15 bg-black/30 p-4">
+            <div class="mb-3 flex items-center justify-between">
+              <div class="text-sm font-bold text-white/90">
+                背包
+              </div>
+            </div>
+            <div v-if="bagEntries(inventoryData.backpack).length === 0" class="text-sm opacity-80">
+              空
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="row in bagEntries(inventoryData.backpack)"
+                :key="`bp:${row.id}`"
+                class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-semibold">
+                    {{ itemLabel(row.id) }}
+                  </div>
+                  <div class="text-xs opacity-80">
+                    x{{ row.count }}
+                  </div>
+                </div>
+                <button
+                  class="shrink-0 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                  @click="transferItem('backpack', 'warehouse', row.id, 1)"
+                >
+                  存入
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-white/15 bg-black/30 p-4">
+            <div class="mb-3 flex items-center justify-between">
+              <div class="text-sm font-bold text-white/90">
+                仓库
+              </div>
+            </div>
+            <div v-if="bagEntries(inventoryData.warehouse).length === 0" class="text-sm opacity-80">
+              空
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="row in bagEntries(inventoryData.warehouse)"
+                :key="`wh:${row.id}`"
+                class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-semibold">
+                    {{ itemLabel(row.id) }}
+                  </div>
+                  <div class="text-xs opacity-80">
+                    x{{ row.count }}
+                  </div>
+                </div>
+                <button
+                  class="shrink-0 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                  @click="transferItem('warehouse', 'backpack', row.id, 1)"
+                >
+                  取出
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

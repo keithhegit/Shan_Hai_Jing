@@ -11,6 +11,55 @@
 - `docs/terrain_data_system_cedd794c.plan.md`（地形数据系统专项方案）
 - `docs/PRD.md`（产品需求/体验规格）
 - `docs/project_plan.md`（项目总规划与里程碑）
+- `docs/Project_SHJ_development_plan.md`（高概念策划案：长线玩法系统参考）
+
+---
+
+## 0. 快速导航（文档 / 代码 / 事件）
+
+### 0.1 文档索引
+- 总表（本文件）：`docs/master_plan.md`
+- PRD/体验规格：`docs/PRD.md`
+- 迭代里程碑：`docs/project_plan.md`
+- 技术行动纲领：`docs/might&magic_development_plan.md`
+- 地形数据系统专项：`docs/terrain_data_system_cedd794c.plan.md`
+- 高概念策划案（长线参考）：`docs/Project_SHJ_development_plan.md`
+
+### 0.2 启动入口（Vue → Experience）
+- Vue 根组件：`src/App.vue`（创建 canvas，`new Experience(canvas)`，订阅 UI 事件）
+- Experience 单例：`src/js/experience.js`（挂 `window.Experience`，持有 Time/Camera/Renderer/World；可 `switchWorld()`）
+- 旧入口（可能未使用）：`src/js/index.js`（DOM 查询 `#canvas` 后创建 Experience）
+
+### 0.3 世界层（World / DungeonWorld）
+- 主世界（Hub + Dungeon 切换）：`src/js/world/world.js`
+- 切换世界占位实现：`src/js/world/dungeon-world.js`（由 `Experience.switchWorld(worldId)` 选择性创建）
+
+### 0.4 地形与生成（两套数据源并存）
+- TerrainDataManager（高度/颜色数据源）：`src/js/world/terrain-data-manager.js`
+- Terrain（InstancedMesh 方块渲染）：`src/js/world/terrain.js`
+- ChunkManager（流式/碰撞/方块查询）：`src/js/world/terrain/chunk-manager.js`
+- BlockDungeonGenerator（块状地牢布局生成）：`src/js/world/dungeon/block-dungeon-generator.js`
+
+### 0.5 输入与事件（关键链路）
+- 输入采集与映射：`src/js/utils/input.js`
+  - 移动状态：`input:update`
+  - 跳跃：`input:jump`
+  - 攻击（键盘）：`input:punch_straight`（Z）、`input:punch_hook`（X）
+  - 格挡：`input:block`（C 按下/松开）
+  - 交互：`input:interact`（E）
+  - 快速返回：`input:quick_return`（R）
+  - 锁定：`input:mouse_down(button=1)` / `input:lock_on`（中键）
+- 输入到世界：`src/js/world/world.js`
+  - 锁定：`_toggleLockOn()`、`_updateLockOn()`
+  - 攻击：`_tryPlayerAttack(...)`（由 `input:punch_*` 触发）
+  - 交互/进出地牢：`_onInteract()`、`_activatePortal()`、`_enterDungeon()`、`_exitDungeon()`
+  - 探索进度：`_emitDungeonProgress()`（读完后解锁 `R` 快速返回）
+- UI 事件订阅入口：`src/App.vue`
+  - Portal/Interactable Prompt：`portal:*`、`interactable:*`
+  - Loading：`loading:*`
+  - Dungeon：`dungeon:*`
+  - Lock：`combat:lock` / `combat:lock_clear`
+  - CTA：`ui:show_cta` / `ui:hide_cta`（组件：`src/components/GameCTA.vue`）
 
 ---
 

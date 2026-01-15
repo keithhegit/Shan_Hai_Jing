@@ -57,6 +57,12 @@ export default class World {
     this.chunkManager = null
     this.portals = []
 
+    this._inventory = this._loadInventory()
+    this._inventorySaveTimer = null
+    this._activeInventoryPanel = null
+
+    this._carriedAnimal = null
+
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
         chunkWidth: CHUNK_BASIC_CONFIG.chunkWidth,
@@ -104,22 +110,28 @@ export default class World {
       this.blockEditMode = 'remove'
 
       // 监听模式切换
-      emitter.on('input:toggle_block_edit_mode', () => {
+      this._onToggleBlockEditMode = () => {
         this.blockEditMode = this.blockEditMode === 'remove' ? 'add' : 'remove'
         emitter.emit('game:block_edit_mode_changed', { mode: this.blockEditMode })
-      })
+      }
+      emitter.on('input:toggle_block_edit_mode', this._onToggleBlockEditMode)
 
       // ===== 交互事件绑定：删除/新增方块 =====
-      emitter.on('input:mouse_down', (event) => {
+      this._onMouseDown = (event) => {
         if (event.button === 1) {
           this._toggleLockOn()
+          return
+        }
+        if (event.button === 2) {
+          this._throwCarriedAnimal()
           return
         }
         // 0 为左键
         if (event.button === 0 && this.blockRaycaster?.current) {
           // ... logic disabled
         }
-      })
+      }
+      emitter.on('input:mouse_down', this._onMouseDown)
 
       this._onPunchStraight = () => {
         this._tryPlayerAttack({ damage: 1, range: 2.6, minDot: 0.35, cooldownMs: 220 })
@@ -154,6 +166,11 @@ export default class World {
             id: this._activeInteractable.id,
             title: this._activeInteractable.title,
             description: this._activeInteractable.description,
+          }
+          if (this._activeInteractable.title === '任务宝箱' && !this._activeInteractable.read) {
+            payload.actions = [
+              { id: 'claim_reward', label: '领取奖励' },
+            ]
           }
           this._emitDungeonState()
           emitter.emit('interactable:open', payload)
@@ -200,6 +217,34 @@ export default class World {
         this.experience.pointerLock?.requestLock?.()
       }
 
+      this._onInteractableAction = (payload) => {
+        if (!payload?.id || !payload?.action)
+          return
+        if (payload.action !== 'claim_reward')
+          return
+        const item = (this._dungeonInteractables || []).find(i => i.id === payload.id)
+          || (this.interactables || []).find(i => i.id === payload.id)
+        if (!item || item.title !== '任务宝箱' || item.read)
+          return
+
+        this._addInventoryItem('backpack', 'fence', 1)
+        item.read = true
+        if (item.mesh) {
+          item.mesh.visible = false
+          item.mesh.parent?.remove?.(item.mesh)
+        }
+        if (item.outline) {
+          item.outline.visible = false
+          item.outline.parent?.remove?.(item.outline)
+        }
+        if (this.currentWorld === 'dungeon')
+          this._emitDungeonProgress()
+        emitter.emit('dungeon:toast', { text: '获得：Fence x1（已放入背包）' })
+        this._scheduleInventorySave()
+        this._emitInventorySummary()
+        this._emitInventoryState()
+      }
+
       this._onPause = () => {
         this.isPaused = true
         this._emitDungeonState()
@@ -224,9 +269,34 @@ export default class World {
 
       emitter.on('input:interact', this._onInteract)
       emitter.on('interactable:close', this._onInteractableClose)
+      emitter.on('interactable:action', this._onInteractableAction)
       emitter.on('input:quick_return', this._onQuickReturn)
       emitter.on('game:pause', this._onPause)
       emitter.on('game:resume', this._onResume)
+
+      this._onToggleBackpack = () => {
+        this._toggleInventoryPanel('backpack')
+      }
+      this._onToggleWarehouse = () => {
+        this._toggleInventoryPanel('warehouse')
+      }
+      this._onInventoryClose = () => {
+        this._closeInventoryPanel()
+      }
+      this._onInventoryTransfer = (payload) => {
+        this._transferInventory(payload)
+      }
+      this._onGrabPet = () => {
+        this._toggleCarryAnimal()
+      }
+
+      emitter.on('input:toggle_backpack', this._onToggleBackpack)
+      emitter.on('input:toggle_warehouse', this._onToggleWarehouse)
+      emitter.on('inventory:close', this._onInventoryClose)
+      emitter.on('inventory:transfer', this._onInventoryTransfer)
+      emitter.on('input:grab_pet', this._onGrabPet)
+
+      this._emitInventorySummary()
     })
   }
 
@@ -372,11 +442,333 @@ export default class World {
     }
   }
 
+  _loadInventory() {
+    try {
+      if (typeof window === 'undefined')
+        return { backpack: { items: {} }, warehouse: { items: {} } }
+      const raw = window.localStorage?.getItem?.('mmmc:inventory_v1')
+      if (!raw)
+        return { backpack: { items: {} }, warehouse: { items: {} } }
+      const parsed = JSON.parse(raw)
+      const backpack = parsed?.backpack?.items && typeof parsed.backpack.items === 'object'
+        ? parsed.backpack.items
+        : {}
+      const warehouse = parsed?.warehouse?.items && typeof parsed.warehouse.items === 'object'
+        ? parsed.warehouse.items
+        : {}
+      return {
+        backpack: { items: this._sanitizeItemMap(backpack) },
+        warehouse: { items: this._sanitizeItemMap(warehouse) },
+      }
+    }
+    catch {
+      return { backpack: { items: {} }, warehouse: { items: {} } }
+    }
+  }
+
+  _sanitizeItemMap(map) {
+    const next = {}
+    for (const [key, value] of Object.entries(map || {})) {
+      if (typeof key !== 'string')
+        continue
+      const n = Number(value)
+      if (!Number.isFinite(n))
+        continue
+      const count = Math.floor(n)
+      if (count <= 0)
+        continue
+      next[key] = count
+    }
+    return next
+  }
+
+  _saveInventoryNow() {
+    try {
+      if (typeof window === 'undefined')
+        return
+      window.localStorage?.setItem?.('mmmc:inventory_v1', JSON.stringify(this._inventory || {}))
+    }
+    catch {
+    }
+  }
+
+  _scheduleInventorySave() {
+    if (this._inventorySaveTimer)
+      clearTimeout(this._inventorySaveTimer)
+    this._inventorySaveTimer = setTimeout(() => {
+      this._inventorySaveTimer = null
+      this._saveInventoryNow()
+    }, 250)
+  }
+
+  _getBagItems(bagName) {
+    if (!this._inventory)
+      this._inventory = { backpack: { items: {} }, warehouse: { items: {} } }
+    if (bagName === 'warehouse') {
+      if (!this._inventory.warehouse)
+        this._inventory.warehouse = { items: {} }
+      if (!this._inventory.warehouse.items)
+        this._inventory.warehouse.items = {}
+      return this._inventory.warehouse.items
+    }
+    if (!this._inventory.backpack)
+      this._inventory.backpack = { items: {} }
+    if (!this._inventory.backpack.items)
+      this._inventory.backpack.items = {}
+    return this._inventory.backpack.items
+  }
+
+  _getItemTotalCount(items) {
+    return Object.values(items || {}).reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0)
+  }
+
+  _emitInventorySummary() {
+    const backpackItems = this._getBagItems('backpack')
+    const warehouseItems = this._getBagItems('warehouse')
+    emitter.emit('inventory:summary', {
+      backpackTotal: this._getItemTotalCount(backpackItems),
+      warehouseTotal: this._getItemTotalCount(warehouseItems),
+      backpackStacks: Object.keys(backpackItems).length,
+      warehouseStacks: Object.keys(warehouseItems).length,
+      carriedPet: this._carriedAnimal?.group ? (this._carriedAnimal._typeLabel || this._carriedAnimal._resourceKey || '') : '',
+    })
+  }
+
+  _emitInventoryState() {
+    emitter.emit('inventory:update', {
+      panel: this._activeInventoryPanel,
+      backpack: { ...this._getBagItems('backpack') },
+      warehouse: { ...this._getBagItems('warehouse') },
+    })
+  }
+
+  _toggleInventoryPanel(panel) {
+    if (this._activeInventoryPanel) {
+      if (this._activeInventoryPanel === panel) {
+        this._closeInventoryPanel()
+        return
+      }
+      this._activeInventoryPanel = panel
+      this._emitInventoryState()
+      emitter.emit('inventory:open', { panel })
+      return
+    }
+    if (this.isPaused)
+      return
+    this._openInventoryPanel(panel)
+  }
+
+  _openInventoryPanel(panel) {
+    this._activeInventoryPanel = panel
+    this.isPaused = true
+    this.experience.pointerLock?.exitLock?.()
+    this._emitDungeonState()
+    this._emitInventoryState()
+    emitter.emit('inventory:open', { panel })
+  }
+
+  _closeInventoryPanel() {
+    if (!this._activeInventoryPanel)
+      return
+    this._activeInventoryPanel = null
+    this.isPaused = false
+    this._emitDungeonState()
+    emitter.emit('inventory:close_ui')
+    this.experience.pointerLock?.requestLock?.()
+  }
+
+  _addInventoryItem(bagName, itemId, amount = 1) {
+    const items = this._getBagItems(bagName)
+    const delta = Math.max(0, Math.floor(Number(amount) || 0))
+    if (!itemId || delta <= 0)
+      return
+    items[itemId] = (items[itemId] || 0) + delta
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    this._scheduleInventorySave()
+  }
+
+  _removeInventoryItem(bagName, itemId, amount = 1) {
+    const items = this._getBagItems(bagName)
+    const delta = Math.max(0, Math.floor(Number(amount) || 0))
+    if (!itemId || delta <= 0)
+      return false
+    const current = items[itemId] || 0
+    if (current < delta)
+      return false
+    const next = current - delta
+    if (next <= 0)
+      delete items[itemId]
+    else
+      items[itemId] = next
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    this._scheduleInventorySave()
+    return true
+  }
+
+  _transferInventory(payload) {
+    const from = payload?.from
+    const to = payload?.to
+    const itemId = payload?.itemId
+    const amount = payload?.amount ?? 1
+    if (!from || !to || from === to || !itemId)
+      return
+    const ok = this._removeInventoryItem(from, itemId, amount)
+    if (!ok)
+      return
+    this._addInventoryItem(to, itemId, amount)
+  }
+
   _getSurfaceY(worldX, worldZ) {
     const topY = this.chunkManager?.getTopSolidYWorld?.(worldX, worldZ)
     if (typeof topY !== 'number' || Number.isNaN(topY))
       return 10
     return topY + 0.55
+  }
+
+  _findGrabCandidateAnimal() {
+    if (this.currentWorld !== 'hub' || !this.player || !this.animals || this.animals.length === 0)
+      return null
+    const camera = this.experience.camera?.instance
+    if (!camera)
+      return null
+
+    const camPos = new THREE.Vector3()
+    const camDir = new THREE.Vector3()
+    camera.getWorldPosition(camPos)
+    camera.getWorldDirection(camDir)
+
+    let best = null
+    let bestScore = Infinity
+    for (const animal of this.animals) {
+      if (!animal?.group)
+        continue
+      if (animal === this._carriedAnimal)
+        continue
+      if (animal.behavior?.physics)
+        continue
+
+      const aPos = new THREE.Vector3()
+      animal.group.getWorldPosition(aPos)
+      aPos.y += 0.9
+
+      const dx = aPos.x - camPos.x
+      const dy = aPos.y - camPos.y
+      const dz = aPos.z - camPos.z
+      const dist = Math.hypot(dx, dy, dz)
+      if (dist > 10)
+        continue
+      if (dist < 0.0001)
+        continue
+      const nx = dx / dist
+      const ny = dy / dist
+      const nz = dz / dist
+      const dot = nx * camDir.x + ny * camDir.y + nz * camDir.z
+      if (dot < 0.86)
+        continue
+      const score = dist / Math.max(0.001, dot)
+      if (score < bestScore) {
+        bestScore = score
+        best = animal
+      }
+    }
+    return best
+  }
+
+  _toggleCarryAnimal() {
+    if (this.isPaused)
+      return
+    if (this.currentWorld !== 'hub')
+      return
+    if (this._carriedAnimal) {
+      this._dropCarriedAnimal()
+      return
+    }
+    const target = this._findGrabCandidateAnimal()
+    if (!target)
+      return
+    this._carriedAnimal = target
+    if (!this._carriedAnimal.behavior)
+      this._carriedAnimal.behavior = {}
+    this._carriedAnimal.behavior.state = 'carried'
+    this._carriedAnimal.behavior.timer = 0
+    this._carriedAnimal.behavior.physics = null
+    this._carriedAnimal.playAnimation?.('Idle')
+    this._emitInventorySummary()
+  }
+
+  _dropCarriedAnimal() {
+    if (!this._carriedAnimal || !this.player)
+      return
+    const animal = this._carriedAnimal
+    this._carriedAnimal = null
+    if (!animal.behavior)
+      animal.behavior = {}
+    animal.behavior.state = 'idle'
+    animal.behavior.timer = 1 + Math.random() * 2
+    animal.playAnimation?.('Idle')
+    const p = this.player.getPosition()
+    const angle = this.player.getFacingAngle()
+    const fx = Math.sin(angle)
+    const fz = Math.cos(angle)
+    animal.group.position.set(p.x + fx * 1.4, p.y + 0.6, p.z + fz * 1.4)
+    const groundY = this._getSurfaceY(animal.group.position.x, animal.group.position.z)
+    animal.group.position.y = groundY
+    this._emitInventorySummary()
+  }
+
+  _throwCarriedAnimal() {
+    if (this.isPaused)
+      return
+    if (this.currentWorld !== 'hub')
+      return
+    if (!this._carriedAnimal || !this.player)
+      return
+
+    const camera = this.experience.camera?.instance
+    if (!camera) {
+      this._dropCarriedAnimal()
+      return
+    }
+
+    const animal = this._carriedAnimal
+    this._carriedAnimal = null
+
+    const dir = new THREE.Vector3()
+    camera.getWorldDirection(dir)
+    dir.normalize()
+
+    const camPos = new THREE.Vector3()
+    camera.getWorldPosition(camPos)
+    const start = camPos.clone().add(dir.clone().multiplyScalar(2.1))
+    start.y -= 0.65
+    const groundY = this._getSurfaceY(start.x, start.z) + 0.25
+    if (start.y < groundY)
+      start.y = groundY
+    animal.group.position.copy(start)
+
+    const baseSpeed = 12
+    const vel = dir.multiplyScalar(baseSpeed)
+    const pv = this.player.getVelocity()
+    vel.x += pv.x * 0.35
+    vel.z += pv.z * 0.35
+    vel.y += Math.max(0.2, pv.y * 0.15)
+
+    if (!animal.behavior)
+      animal.behavior = {}
+    animal.behavior.state = 'thrown'
+    animal.behavior.physics = {
+      vx: vel.x,
+      vy: vel.y,
+      vz: vel.z,
+      spin: (Math.random() - 0.5) * 10,
+      bounces: 0,
+    }
+    animal.group.rotation.x = 0
+    animal.group.rotation.z = 0
+    animal.playAnimation?.('Idle')
+    this._emitInventorySummary()
   }
 
   _getDungeonBlockWorld(x, y, z) {
@@ -562,6 +954,11 @@ export default class World {
   _activatePortal(portal) {
     if (this.currentWorld !== 'hub')
       return
+
+    if (this._activeInventoryPanel)
+      this._closeInventoryPanel()
+    if (this._carriedAnimal)
+      this._dropCarriedAnimal()
 
     this.isPaused = true
     emitter.emit('portal:prompt_clear')
@@ -1100,6 +1497,59 @@ export default class World {
         return
 
       const data = animal.behavior
+
+      if (data.state === 'carried' && animal === this._carriedAnimal) {
+        const camera = this.experience.camera?.instance
+        if (camera) {
+          const camPos = new THREE.Vector3()
+          const camDir = new THREE.Vector3()
+          camera.getWorldPosition(camPos)
+          camera.getWorldDirection(camDir)
+          camDir.normalize()
+
+          const hold = camPos.clone().add(camDir.multiplyScalar(2.1))
+          hold.y -= 0.85
+          const groundY = this._getSurfaceY(hold.x, hold.z) + 0.2
+          if (hold.y < groundY)
+            hold.y = groundY
+
+          animal.group.position.lerp(hold, 0.35)
+          animal.group.rotation.y = Math.atan2(camDir.x, camDir.z)
+        }
+        return
+      }
+
+      if (data.physics) {
+        const physics = data.physics
+        physics.vy -= 18 * dt
+        animal.group.position.x += physics.vx * dt
+        animal.group.position.y += physics.vy * dt
+        animal.group.position.z += physics.vz * dt
+        animal.group.rotation.y += (physics.spin || 0) * dt
+
+        const pos = animal.group.position
+        const groundY = this._getSurfaceY(pos.x, pos.z)
+        if (pos.y <= groundY) {
+          pos.y = groundY
+          if (physics.vy < 0) {
+            physics.vy = -physics.vy * 0.45
+            physics.vx *= 0.72
+            physics.vz *= 0.72
+            physics.spin *= 0.7
+            physics.bounces = (physics.bounces || 0) + 1
+          }
+        }
+
+        const speed = Math.hypot(physics.vx, physics.vy, physics.vz)
+        if ((physics.bounces || 0) >= 4 || speed < 1.2) {
+          data.physics = null
+          data.state = 'idle'
+          data.timer = 2 + Math.random() * 2
+          animal.playAnimation('Idle')
+        }
+        return
+      }
+
       data.timer -= dt
 
       if (data.timer <= 0) {
@@ -1417,10 +1867,28 @@ export default class World {
       emitter.off('game:pause', this._onPause)
     if (this._onResume)
       emitter.off('game:resume', this._onResume)
+    if (this._onInteractableAction)
+      emitter.off('interactable:action', this._onInteractableAction)
+    if (this._onToggleBackpack)
+      emitter.off('input:toggle_backpack', this._onToggleBackpack)
+    if (this._onToggleWarehouse)
+      emitter.off('input:toggle_warehouse', this._onToggleWarehouse)
+    if (this._onInventoryClose)
+      emitter.off('inventory:close', this._onInventoryClose)
+    if (this._onInventoryTransfer)
+      emitter.off('inventory:transfer', this._onInventoryTransfer)
+    if (this._onGrabPet)
+      emitter.off('input:grab_pet', this._onGrabPet)
     if (this._onPunchStraight)
       emitter.off('input:punch_straight', this._onPunchStraight)
     if (this._onPunchHook)
       emitter.off('input:punch_hook', this._onPunchHook)
+    if (this._onToggleBlockEditMode)
+      emitter.off('input:toggle_block_edit_mode', this._onToggleBlockEditMode)
+    if (this._onMouseDown)
+      emitter.off('input:mouse_down', this._onMouseDown)
+    if (this._inventorySaveTimer)
+      clearTimeout(this._inventorySaveTimer)
 
     // Clear terrainDataManager reference
     if (this.experience.terrainDataManager === this.chunkManager) {

@@ -5,6 +5,7 @@ import emitter from '../js/utils/event-bus.js'
 const maxHearts = ref(5)
 const currentHearts = ref(5)
 const staminaPercent = ref(100)
+const inventorySummary = ref({ backpackTotal: 0, warehouseTotal: 0, carriedPet: '' })
 
 function updateStats(stats) {
   if (stats.hp !== undefined)
@@ -15,12 +16,18 @@ function updateStats(stats) {
     staminaPercent.value = stats.stamina
 }
 
+function updateInventorySummary(payload) {
+  inventorySummary.value = payload || { backpackTotal: 0, warehouseTotal: 0, carriedPet: '' }
+}
+
 onMounted(() => {
   emitter.on('ui:update_stats', updateStats)
+  emitter.on('inventory:summary', updateInventorySummary)
 })
 
 onBeforeUnmount(() => {
   emitter.off('ui:update_stats', updateStats)
+  emitter.off('inventory:summary', updateInventorySummary)
 })
 </script>
 
@@ -41,6 +48,20 @@ onBeforeUnmount(() => {
     <!-- 体力条 (黄色进度条) -->
     <div class="stamina-bar-bg">
       <div class="stamina-bar-fill" :style="{ width: `${staminaPercent}%` }" />
+    </div>
+
+    <div class="inventory-summary">
+      <div class="inventory-row">
+        <span>背包</span>
+        <span>x{{ inventorySummary.backpackTotal }}</span>
+        <span class="sep">·</span>
+        <span>仓库</span>
+        <span>x{{ inventorySummary.warehouseTotal }}</span>
+      </div>
+      <div v-if="inventorySummary.carriedPet" class="inventory-row carried-row">
+        <span>携带</span>
+        <span class="carried-name">{{ inventorySummary.carriedPet }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -88,5 +109,41 @@ onBeforeUnmount(() => {
   background: #ffaa00;
   transition: width 0.1s linear;
   box-shadow: 0 0 5px #ffaa00;
+}
+
+.inventory-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+.inventory-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+}
+
+.sep {
+  opacity: 0.7;
+}
+
+.carried-row {
+  opacity: 0.95;
+}
+
+.carried-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
