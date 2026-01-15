@@ -41,9 +41,6 @@ export default class HumanoidEnemy {
     this.group.rotation.y = rotationY
     this.group.scale.setScalar(scale)
 
-    // Attempt to load GLTF model
-    // 1. Try exact match (e.g. 'animal_pig')
-    // 2. Try with enemy_ prefix (e.g. 'skeleton' -> 'enemy_skeleton')
     let resourceKey = type
     let modelResource = this.resources.items[resourceKey]
 
@@ -66,7 +63,6 @@ export default class HumanoidEnemy {
     this.model = cloneSkinned(gltf.scene)
     this.group.add(this.model)
 
-    // Setup Animation
     this.mixer = new THREE.AnimationMixer(this.model)
     this.actions = {}
 
@@ -80,10 +76,8 @@ export default class HumanoidEnemy {
     }
     this.mixer.addEventListener('finished', this._onMixerFinished)
 
-    // Default animation
     this.playAnimation('Idle')
 
-    // Shadow
     this.model.traverse((child) => {
       if (child.isMesh) {
         child.castShadow = true
@@ -93,7 +87,6 @@ export default class HumanoidEnemy {
 
     this._applyHitBoundsFromObject(this.model)
 
-    // Add Lock Ring (reuse logic)
     const lockRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.85, 0.06, 16, 48),
       new THREE.MeshBasicMaterial({

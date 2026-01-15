@@ -44,6 +44,21 @@ export default class InputManager {
     this.init()
   }
 
+  normalizeKey(event) {
+    const rawKey = event?.key
+    const rawCode = event?.code
+    const key = typeof rawKey === 'string' ? rawKey.toLowerCase() : ''
+    const isAsciiLetter = key.length === 1 && key >= 'a' && key <= 'z'
+    const isKnownToken = key === ' ' || key === 'shift' || key === 'tab' || key.startsWith('arrow')
+    if (isAsciiLetter || isKnownToken)
+      return key
+    if (typeof rawCode === 'string' && rawCode.startsWith('Key') && rawCode.length === 4)
+      return rawCode.slice(3).toLowerCase()
+    if (typeof rawCode === 'string' && rawCode === 'Space')
+      return ' '
+    return ''
+  }
+
   init() {
     // 键盘事件
     window.addEventListener('keydown', this._onKeyDown)
@@ -61,7 +76,7 @@ export default class InputManager {
   // ==================== 键盘事件 ====================
 
   onKeyDown(event) {
-    const key = event.key.toLowerCase()
+    const key = this.normalizeKey(event)
 
     // 阻止游戏控制键的默认行为（如空格滚动页面）
     if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'tab'].includes(key)) {
@@ -77,7 +92,7 @@ export default class InputManager {
   }
 
   onKeyUp(event) {
-    const key = event.key.toLowerCase()
+    const key = this.normalizeKey(event)
     this.updateKey(key, false)
   }
 

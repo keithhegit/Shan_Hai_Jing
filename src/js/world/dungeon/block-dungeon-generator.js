@@ -36,7 +36,7 @@ export default class BlockDungeonGenerator {
 
     // 清理与生成
     layout.rooms.forEach((room) => {
-      const built = this._buildRoom(startX, startZ, floorBlockY, dir, room, style, enemyPositions, interactables)
+      const built = this._buildRoom(startX, startZ, floorBlockY, dir, room, style, enemyPositions, interactables, type)
       if (built?.reward && !reward)
         reward = built.reward
     })
@@ -63,7 +63,7 @@ export default class BlockDungeonGenerator {
     }
   }
 
-  _buildRoom(startX, startZ, floorBlockY, dir, room, style, enemies, _interactables) {
+  _buildRoom(startX, startZ, floorBlockY, dir, room, style, enemies, _interactables, dungeonType) {
     const { l, w, width, length, height } = room
 
     // Calculate world bounds
@@ -124,7 +124,7 @@ export default class BlockDungeonGenerator {
     let reward = null
 
     // Add enemies and loot in center
-    if (room.type === 'main') {
+    if (room.type === 'main' && dungeonType !== 'mine') {
       const cx = startX + dir.x * l + (-dir.z * w)
       const cz = startZ + dir.z * l + (dir.x * w)
       enemies.push({ x: cx + 2, y: floorBlockY + 0.5, z: cz + 2, isBoss: true })
@@ -204,6 +204,7 @@ export default class BlockDungeonGenerator {
       case 'desert': return { x: 0, z: -1 }
       case 'snow': return { x: 1, z: 0 }
       case 'forest': return { x: -1, z: 0 }
+      case 'mine': return { x: 0, z: 1 }
       default: return { x: 0, z: 1 }
     }
   }
@@ -215,6 +216,7 @@ export default class BlockDungeonGenerator {
       case 'desert': return { floor: blocks.sand.id, wall: blocks.terracotta?.id || stone, roof: blocks.sand.id }
       case 'snow': return { floor: blocks.packedIce?.id || stone, wall: blocks.snow?.id || stone, roof: blocks.snow?.id || stone }
       case 'forest': return { floor: blocks.dirt.id, wall: blocks.treeTrunk.id, roof: blocks.treeLeaves.id }
+      case 'mine': return { floor: blocks.stone.id, wall: blocks.stone.id, roof: blocks.stone.id }
       default: return { floor: stone, wall: stone, roof: stone }
     }
   }

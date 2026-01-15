@@ -44,6 +44,8 @@ export default [
   { name: 'enemy_zombie', type: 'gltfModel', path: 'models/Enemies/Zombie.gltf', animations: ['Attack', 'Death', 'HitRecieve', 'Idle', 'Jump', 'Run', 'Walk'] },
   // ===== Environment =====
   { name: 'chest_closed', type: 'gltfModel', path: 'models/Environment/Chest_Closed.gltf' },
+  { name: 'crystal_big', type: 'gltfModel', path: 'models/Environment/Crystal_Big.gltf' },
+  { name: 'crystal_small', type: 'gltfModel', path: 'models/Environment/Crystal_Small.gltf' },
   // ===== Animals =====
   { name: 'animal_cat', type: 'gltfModel', path: 'models/Animals/Cat.gltf' },
   { name: 'animal_chicken', type: 'gltfModel', path: 'models/Animals/Chicken.gltf' },

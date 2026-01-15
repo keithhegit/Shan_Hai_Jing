@@ -131,7 +131,10 @@ export default class World {
           this._throwCarriedAnimal()
           return
         }
-        // 0 为左键
+        if (event.button === 0 && !this.blockRaycaster?.current) {
+          this._fireMatterGun()
+          return
+        }
         if (event.button === 0 && this.blockRaycaster?.current) {
           // ... logic disabled
         }
@@ -634,12 +637,14 @@ export default class World {
     return topY + 0.55
   }
 
-  _findGrabCandidateAnimal() {
+  _findGrabCandidateAnimal(options = {}) {
     if (this.currentWorld !== 'hub' || !this.player || !this.animals || this.animals.length === 0)
       return null
     const camera = this.experience.camera?.instance
     if (!camera)
       return null
+    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 10
+    const minDot = Number.isFinite(options.minDot) ? options.minDot : 0.86
 
     const camPos = new THREE.Vector3()
     const camDir = new THREE.Vector3()
@@ -664,7 +669,7 @@ export default class World {
       const dy = aPos.y - camPos.y
       const dz = aPos.z - camPos.z
       const dist = Math.hypot(dx, dy, dz)
-      if (dist > 10)
+      if (dist > maxDist)
         continue
       if (dist < 0.0001)
         continue
@@ -672,7 +677,7 @@ export default class World {
       const ny = dy / dist
       const nz = dz / dist
       const dot = nx * camDir.x + ny * camDir.y + nz * camDir.z
-      if (dot < 0.86)
+      if (dot < minDot)
         continue
       const score = dist / Math.max(0.001, dot)
       if (score < bestScore) {
@@ -681,6 +686,162 @@ export default class World {
       }
     }
     return best
+  }
+
+  _findFrontHubDrop(options = {}) {
+    if (!this._hubDrops || this._hubDrops.length === 0)
+      return null
+    const camera = this.experience.camera?.instance
+    if (!camera)
+      return null
+    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 12
+    const minDot = Number.isFinite(options.minDot) ? options.minDot : 0.84
+
+    const camPos = new THREE.Vector3()
+    const camDir = new THREE.Vector3()
+    camera.getWorldPosition(camPos)
+    camera.getWorldDirection(camDir)
+
+    let best = null
+    let bestScore = Infinity
+
+    for (const drop of this._hubDrops) {
+      const mesh = drop?.mesh
+      if (!mesh || mesh.visible === false)
+        continue
+      const pos = mesh.position
+      const dx = pos.x - camPos.x
+      const dy = (pos.y + 0.15) - camPos.y
+      const dz = pos.z - camPos.z
+      const dist = Math.hypot(dx, dy, dz)
+      if (dist > maxDist || dist < 0.0001)
+        continue
+      const nx = dx / dist
+      const ny = dy / dist
+      const nz = dz / dist
+      const dot = nx * camDir.x + ny * camDir.y + nz * camDir.z
+      if (dot < minDot)
+        continue
+      const score = dist / Math.max(0.001, dot)
+      if (score < bestScore) {
+        bestScore = score
+        best = drop
+      }
+    }
+
+    return best
+  }
+
+  _suckHubDrop(drop) {
+    if (!drop?.id)
+      return false
+    const removed = this._removeHubDropById(drop.id)
+    if (!removed)
+      return false
+    const itemId = removed.itemId || 'stone'
+    const count = Math.max(1, Math.floor(Number(removed.count) || 1))
+    this._addInventoryItem('backpack', itemId, count)
+    emitter.emit('dungeon:toast', { text: `获得：${itemId} x${count}（已放入背包）` })
+    this._scheduleInventorySave()
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    return true
+  }
+
+  _findFrontDungeonOre(options = {}) {
+    if (!this._mineOres || this._mineOres.length === 0)
+      return null
+    const camera = this.experience.camera?.instance
+    if (!camera)
+      return null
+    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 12
+    const minDot = Number.isFinite(options.minDot) ? options.minDot : 0.84
+
+    const camPos = new THREE.Vector3()
+    const camDir = new THREE.Vector3()
+    camera.getWorldPosition(camPos)
+    camera.getWorldDirection(camDir)
+
+    let best = null
+    let bestScore = Infinity
+
+    for (const ore of this._mineOres) {
+      const mesh = ore?.mesh
+      if (!mesh || mesh.visible === false)
+        continue
+      const pos = mesh.position
+      const dx = pos.x - camPos.x
+      const dy = (pos.y + 0.35) - camPos.y
+      const dz = pos.z - camPos.z
+      const dist = Math.hypot(dx, dy, dz)
+      if (dist > maxDist || dist < 0.0001)
+        continue
+      const nx = dx / dist
+      const ny = dy / dist
+      const nz = dz / dist
+      const dot = nx * camDir.x + ny * camDir.y + nz * camDir.z
+      if (dot < minDot)
+        continue
+      const score = dist / Math.max(0.001, dot)
+      if (score < bestScore) {
+        bestScore = score
+        best = ore
+      }
+    }
+
+    return best
+  }
+
+  _suckDungeonOre(ore) {
+    const mesh = ore?.mesh
+    if (!mesh)
+      return false
+    const itemId = ore.itemId || 'crystal'
+    const count = Math.max(1, Math.floor(Number(ore.count) || 1))
+    mesh.visible = false
+    mesh.removeFromParent?.()
+    const index = this._mineOres?.indexOf?.(ore) ?? -1
+    if (index >= 0)
+      this._mineOres.splice(index, 1)
+    this._addInventoryItem('backpack', itemId, count)
+    emitter.emit('dungeon:toast', { text: `获得：${itemId} x${count}（已放入背包）` })
+    this._scheduleInventorySave()
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    return true
+  }
+
+  _fireMatterGun() {
+    if (this.isPaused)
+      return
+
+    if (this.currentWorld === 'hub') {
+      if (!this._carriedAnimal) {
+        const target = this._findGrabCandidateAnimal({ maxDist: 16, minDot: 0.74 })
+        if (target) {
+          this._carriedAnimal = target
+          if (!this._carriedAnimal.behavior)
+            this._carriedAnimal.behavior = {}
+          this._carriedAnimal.behavior.state = 'carried'
+          this._carriedAnimal.behavior.timer = 0
+          this._carriedAnimal.behavior.physics = null
+          this._carriedAnimal.playAnimation?.('Idle')
+          this._emitInventorySummary()
+          return
+        }
+      }
+
+      const drop = this._findFrontHubDrop({ maxDist: 14, minDot: 0.72 })
+      if (drop)
+        this._suckHubDrop(drop)
+      return
+    }
+
+    if (this.currentWorld === 'dungeon') {
+      const ore = this._findFrontDungeonOre({ maxDist: 14, minDot: 0.72 })
+      if (ore)
+        this._suckDungeonOre(ore)
+    }
   }
 
   _toggleCarryAnimal() {
@@ -949,6 +1110,13 @@ export default class World {
         target: { x: hub.x, z: hub.z - targetOffset },
         color: 0x69_FF_93,
       },
+      {
+        id: 'mine',
+        name: '矿山',
+        anchor: { x: hub.x + 12, z: hub.z + 12 },
+        target: { x: hub.x + targetOffset, z: hub.z + targetOffset },
+        color: 0x9D_AA_FF,
+      },
     ]
 
     const ringGeometry = new THREE.TorusGeometry(1.25, 0.18, 16, 48)
@@ -1073,6 +1241,8 @@ export default class World {
 
     // 初始化交互物 (使用 generator 返回的位置)
     this._initDungeonInteractablesV2(interactables, portal.id)
+    if (portal.id === 'mine')
+      this._initMineOres(spawn)
 
     const saved = this._portalDungeonProgress?.[portal.id]
     if (saved && this._dungeonInteractables) {
@@ -1235,6 +1405,68 @@ export default class World {
     }, 700)
   }
 
+  _initMineOres(spawn) {
+    if (!this._dungeonGroup || !spawn)
+      return
+
+    this._mineOres = []
+
+    const group = new THREE.Group()
+    this._dungeonGroup.add(group)
+
+    const big = this.resources.items.crystal_big
+    const small = this.resources.items.crystal_small
+
+    const fallbackBigGeo = new THREE.DodecahedronGeometry(1.2, 0)
+    const fallbackBigMat = new THREE.MeshStandardMaterial({ color: 0x7F_BB_FF, roughness: 0.35, metalness: 0.05 })
+    const fallbackSmallGeo = new THREE.DodecahedronGeometry(0.7, 0)
+    const fallbackSmallMat = new THREE.MeshStandardMaterial({ color: 0xA9_EF_FF, roughness: 0.35, metalness: 0.05 })
+
+    const offsets = [
+      { dx: 3, dz: 4, big: true },
+      { dx: -4, dz: 5, big: false },
+      { dx: 7, dz: 1, big: false },
+      { dx: -7, dz: 2, big: true },
+      { dx: 2, dz: -6, big: false },
+      { dx: -3, dz: -7, big: true },
+      { dx: 9, dz: -4, big: true },
+      { dx: -9, dz: -4, big: false },
+    ]
+
+    for (const cfg of offsets) {
+      const res = cfg.big ? big : small
+      let mesh = null
+      if (res?.scene) {
+        mesh = res.scene.clone()
+        const s = cfg.big ? 1.0 : 0.85
+        mesh.scale.setScalar(s)
+      }
+      else {
+        mesh = new THREE.Mesh(cfg.big ? fallbackBigGeo : fallbackSmallGeo, cfg.big ? fallbackBigMat : fallbackSmallMat)
+      }
+
+      const x = spawn.x + cfg.dx
+      const z = spawn.z + cfg.dz
+      const y = this._getSurfaceY(x, z)
+      mesh.position.set(x, y + 0.1, z)
+      mesh.rotation.y = Math.random() * Math.PI * 2
+      mesh.traverse?.((child) => {
+        if (child?.isMesh) {
+          child.castShadow = true
+          child.receiveShadow = true
+        }
+      })
+      group.add(mesh)
+      const itemId = cfg.big ? 'crystal_big' : 'crystal_small'
+      this._mineOres.push({
+        mesh,
+        itemId,
+        count: 1,
+        hitRadius: this._getHitRadiusFromObject(mesh, cfg.big ? 1.2 : 0.8),
+      })
+    }
+  }
+
   _updateDungeonExit() {
     if (this.currentWorld !== 'dungeon' || !this._dungeonExit || !this.player)
       return
@@ -1315,13 +1547,11 @@ export default class World {
         mesh = new THREE.Mesh(geometry, material)
       }
 
-      // 确保箱子在地板上
-      mesh.position.set(pos.x, pos.y + 0.5, pos.z) // box center is 0.5 up? GLTF origin is usually bottom.
-      // If GLTF origin is bottom, then pos.y is fine. If center, pos.y + height/2.
-      // Chest model usually bottom origin.
-      // But let's assume bottom for now.
+      mesh.position.set(pos.x, pos.y + 0.5, pos.z)
 
       this._dungeonInteractablesGroup.add(mesh)
+
+      const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
 
       return {
         id,
@@ -1330,6 +1560,7 @@ export default class World {
         x: pos.x,
         z: pos.z,
         mesh,
+        hitRadius,
         range: 2.6,
         read: false,
       }
@@ -1410,7 +1641,6 @@ export default class World {
       },
     ]
 
-    // Use Chest Model for Hub Interactables
     this.interactables = items.map((item) => {
       let mesh
       const resource = this.resources.items.chest_closed
@@ -1442,16 +1672,18 @@ export default class World {
       outline.visible = false
 
       const y = this._getSurfaceY(item.x, item.z)
-      // Adjust Y based on model pivot
       mesh.position.set(item.x, y + 0.5, item.z)
       outline.position.copy(mesh.position)
 
       this._interactablesGroup.add(mesh, outline)
 
+      const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
+
       return {
         ...item,
         mesh,
         outline,
+        hitRadius,
         range: 2.6,
         read: false,
       }
@@ -1491,6 +1723,8 @@ export default class World {
       box: { x: boxX, y: boxY, z: boxZ, radius: 3.2 },
     }
 
+    this._hubColliders = []
+
     const quarryMesh = new THREE.Mesh(
       new THREE.DodecahedronGeometry(1.35, 0),
       new THREE.MeshStandardMaterial({ color: 0x6B6B6B, roughness: 0.95, metalness: 0.0 }),
@@ -1499,6 +1733,7 @@ export default class World {
     quarryMesh.castShadow = true
     quarryMesh.receiveShadow = true
     this._hubAutomationGroup.add(quarryMesh)
+    this._hubColliders.push({ mesh: quarryMesh, hitRadius: this._getHitRadiusFromObject(quarryMesh, 1.3) })
 
     let boxMesh
     const resource = this.resources.items.chest_closed
@@ -1514,6 +1749,7 @@ export default class World {
     }
     boxMesh.position.set(boxX, boxY + 0.5, boxZ)
     this._hubAutomationGroup.add(boxMesh)
+    this._hubColliders.push({ mesh: boxMesh, hitRadius: this._getHitRadiusFromObject(boxMesh, 1.0) })
 
     this._hubDropGeo = new THREE.IcosahedronGeometry(0.22, 0)
     this._hubDropMaterials = {
@@ -1668,6 +1904,11 @@ export default class World {
     const seeds = [
       { type: 'animal_pig', role: 'miner', label: '矿工鼠', dx: 6, dz: -6 },
       { type: 'animal_sheep', role: 'carrier', label: '绵绵球', dx: -6, dz: -6 },
+      { type: 'animal_chicken', role: null, label: '小鸡', dx: 6, dz: 6 },
+      { type: 'animal_cat', role: null, label: '猫猫', dx: -6, dz: 6 },
+      { type: 'animal_wolf', role: null, label: '狼', dx: 10, dz: 0 },
+      { type: 'animal_horse', role: null, label: '马', dx: 0, dz: 10 },
+      { type: 'animal_dog', role: null, label: '狗狗', dx: 0, dz: -10 },
     ]
 
     const spawnAnimal = (cfg) => {
@@ -1706,7 +1947,7 @@ export default class World {
     for (let i = seeds.length; i < count; i++) {
       const type = types[Math.floor(Math.random() * types.length)]
       // Random position within safe range
-      const range = 40
+      const range = 26
       const x = centerX + (Math.random() - 0.5) * 2 * range
       const z = centerZ + (Math.random() - 0.5) * 2 * range
 
@@ -2191,6 +2432,8 @@ export default class World {
         const y = this._getSurfaceY(clampedX, clampedZ)
         this.player.teleportTo(clampedX, y + 1.1, clampedZ)
       }
+
+      this._resolvePlayerHubCollisions()
     }
     else if (this.currentWorld === 'dungeon') {
       this._updateDungeonInteractables()
@@ -2198,7 +2441,130 @@ export default class World {
       this._updateLockOn()
       this._updateDungeonEnemies()
       this._resolvePlayerEnemyCollisions()
+      this._resolvePlayerDungeonObjectCollisions()
     }
+  }
+
+  _getHitRadiusFromObject(object3d, fallback = 0.9) {
+    try {
+      if (!object3d)
+        return fallback
+      const box = new THREE.Box3().setFromObject(object3d)
+      const size = new THREE.Vector3()
+      box.getSize(size)
+      const radius = Math.max(size.x, size.z) * 0.5
+      if (Number.isFinite(radius) && radius > 0.05)
+        return radius
+      return fallback
+    }
+    catch {
+      return fallback
+    }
+  }
+
+  _resolvePlayerCircleCollisions(colliders) {
+    const movement = this.player?.movement
+    if (!movement || !colliders || colliders.length === 0)
+      return
+
+    const base = movement.position
+    const pr = movement.capsule?.radius ?? 0.3
+    const v = movement.worldVelocity
+
+    for (const collider of colliders) {
+      const group = collider?.group
+      const mesh = collider?.mesh
+      const pos = group?.position || mesh?.position || collider?.position
+      if (!pos)
+        continue
+      if (group && group.visible === false)
+        continue
+      if (mesh && mesh.visible === false)
+        continue
+
+      const er = collider?.hitRadius ?? collider?.radius ?? 0.9
+      if (!(Number.isFinite(er) && er > 0))
+        continue
+      const r = pr + er
+
+      const dx = base.x - pos.x
+      const dz = base.z - pos.z
+      const d2 = dx * dx + dz * dz
+      if (d2 <= 0.000001 || d2 >= r * r)
+        continue
+
+      const d = Math.sqrt(d2)
+      const nx = dx / d
+      const nz = dz / d
+      const overlap = r - d
+
+      base.x += nx * overlap
+      base.z += nz * overlap
+      movement.group.position.copy(base)
+
+      if (v) {
+        const vn = v.x * nx + v.z * nz
+        if (vn < 0) {
+          v.x -= vn * nx
+          v.z -= vn * nz
+        }
+      }
+    }
+  }
+
+  _resolvePlayerHubCollisions() {
+    if (this.currentWorld !== 'hub')
+      return
+
+    const colliders = []
+
+    if (this.animals && this.animals.length) {
+      for (const animal of this.animals) {
+        if (!animal?.group)
+          continue
+        if (animal === this._carriedAnimal)
+          continue
+        colliders.push({ group: animal.group, hitRadius: animal.hitRadius ?? 0.9 })
+      }
+    }
+
+    if (this.interactables && this.interactables.length) {
+      for (const item of this.interactables) {
+        if (!item?.mesh)
+          continue
+        colliders.push({ mesh: item.mesh, hitRadius: item.hitRadius ?? 0.9 })
+      }
+    }
+
+    if (this._hubColliders && this._hubColliders.length) {
+      for (const c of this._hubColliders)
+        colliders.push(c)
+    }
+
+    this._resolvePlayerCircleCollisions(colliders)
+  }
+
+  _resolvePlayerDungeonObjectCollisions() {
+    if (this.currentWorld !== 'dungeon')
+      return
+
+    const colliders = []
+    if (this._dungeonInteractables && this._dungeonInteractables.length) {
+      for (const item of this._dungeonInteractables) {
+        if (!item?.mesh || item.mesh.visible === false)
+          continue
+        colliders.push({ mesh: item.mesh, hitRadius: item.hitRadius ?? 0.9 })
+      }
+    }
+    if (this._mineOres && this._mineOres.length) {
+      for (const ore of this._mineOres) {
+        if (!ore?.mesh || ore.mesh.visible === false)
+          continue
+        colliders.push({ mesh: ore.mesh, hitRadius: ore.hitRadius ?? 0.9 })
+      }
+    }
+
+    this._resolvePlayerCircleCollisions(colliders)
   }
 
   _resolvePlayerEnemyCollisions() {
@@ -2458,6 +2824,8 @@ export default class World {
     mesh.position.set(this._dungeonRewardPending.x, this._dungeonRewardPending.y + 0.5, this._dungeonRewardPending.z)
     this._dungeonInteractablesGroup.add(mesh)
 
+    const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
+
     this._dungeonInteractables.push({
       id,
       title: '任务宝箱',
@@ -2465,6 +2833,7 @@ export default class World {
       x: this._dungeonRewardPending.x,
       z: this._dungeonRewardPending.z,
       mesh,
+      hitRadius,
       range: 2.6,
       read: false,
     })
