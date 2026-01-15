@@ -62,6 +62,13 @@ export default class World {
     this._activeInventoryPanel = null
 
     this._carriedAnimal = null
+    this._hubAutomation = null
+    this._hubAutomationGroup = null
+    this._hubDrops = []
+    this._hubDropsGroup = null
+    this._hubDropSeq = 1
+    this._hubDropGeo = null
+    this._hubDropMaterials = null
 
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
@@ -84,8 +91,6 @@ export default class World {
 
       // Setup
       this.player = new Player()
-
-      this._initAnimals()
 
       // Setup Camera Rig
       this.cameraRig = new CameraRig()
@@ -154,6 +159,8 @@ export default class World {
 
       this._initPortals()
       this._initInteractables()
+      this._initHubAutomation()
+      this._initAnimals()
 
       this._onInteract = () => {
         if (this.isPaused)
@@ -758,17 +765,57 @@ export default class World {
     if (!animal.behavior)
       animal.behavior = {}
     animal.behavior.state = 'thrown'
+    animal.behavior.wasThrown = true
     animal.behavior.physics = {
       vx: vel.x,
       vy: vel.y,
       vz: vel.z,
       spin: (Math.random() - 0.5) * 10,
+      rollX: (Math.random() - 0.5) * 16,
+      rollZ: (Math.random() - 0.5) * 16,
       bounces: 0,
     }
     animal.group.rotation.x = 0
     animal.group.rotation.z = 0
     animal.playAnimation?.('Idle')
     this._emitInventorySummary()
+  }
+
+  _spawnAnimalThought(animal, text, durationSeconds) {
+    if (!animal?.group || !text)
+      return
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 128
+    const ctx = canvas.getContext('2d')
+    if (!ctx)
+      return
+    ctx.clearRect(0, 0, 128, 128)
+    ctx.fillStyle = 'rgba(255,255,255,0.92)'
+    ctx.beginPath()
+    ctx.arc(64, 64, 48, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = 'rgba(0,0,0,0.82)'
+    ctx.font = '56px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, 64, 66)
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.needsUpdate = true
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
+    const sprite = new THREE.Sprite(spriteMaterial)
+    sprite.scale.set(1.2, 1.2, 1.2)
+    sprite.position.set(0, 2.35, 0)
+    animal.group.add(sprite)
+
+    const ttl = Math.max(0.2, Number(durationSeconds) || 1.0) * 1000
+    setTimeout(() => {
+      sprite.visible = false
+      sprite.removeFromParent?.()
+      spriteMaterial.map?.dispose?.()
+      spriteMaterial.dispose?.()
+    }, ttl)
   }
 
   _getDungeonBlockWorld(x, y, z) {
@@ -1115,6 +1162,10 @@ export default class World {
     // 隐藏 Hub 动物
     if (this.animalsGroup)
       this.animalsGroup.visible = false
+    if (this._hubAutomationGroup)
+      this._hubAutomationGroup.visible = false
+    if (this._hubDropsGroup)
+      this._hubDropsGroup.visible = false
 
     // 重要：保持使用 chunkManager 作为碰撞源，不要切换到 _dungeonCollisionProvider
     this.experience.terrainDataManager = this.chunkManager
@@ -1173,6 +1224,10 @@ export default class World {
       // 显示 Hub 动物
       if (this.animalsGroup)
         this.animalsGroup.visible = true
+      if (this._hubAutomationGroup)
+        this._hubAutomationGroup.visible = true
+      if (this._hubDropsGroup)
+        this._hubDropsGroup.visible = true
 
       this.isPaused = false
       this._emitDungeonState()
@@ -1403,6 +1458,154 @@ export default class World {
     })
   }
 
+  _initHubAutomation() {
+    if (this._hubAutomationGroup) {
+      this._hubAutomationGroup.clear()
+      this._hubAutomationGroup.removeFromParent?.()
+    }
+    this._hubAutomationGroup = new THREE.Group()
+    this.scene.add(this._hubAutomationGroup)
+
+    if (this._hubDropsGroup) {
+      this._hubDropsGroup.clear()
+      this._hubDropsGroup.removeFromParent?.()
+    }
+    this._hubDropsGroup = new THREE.Group()
+    this.scene.add(this._hubDropsGroup)
+
+    this._hubDrops = []
+    this._hubDropSeq = 1
+
+    const cx = this._hubCenter?.x ?? 0
+    const cz = this._hubCenter?.z ?? 0
+
+    const quarryX = cx + 12
+    const quarryZ = cz + 3
+    const boxX = cx - 12
+    const boxZ = cz + 3
+    const quarryY = this._getSurfaceY(quarryX, quarryZ)
+    const boxY = this._getSurfaceY(boxX, boxZ)
+
+    this._hubAutomation = {
+      quarry: { x: quarryX, y: quarryY, z: quarryZ, radius: 4.6 },
+      box: { x: boxX, y: boxY, z: boxZ, radius: 3.2 },
+    }
+
+    const quarryMesh = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(1.35, 0),
+      new THREE.MeshStandardMaterial({ color: 0x6B6B6B, roughness: 0.95, metalness: 0.0 }),
+    )
+    quarryMesh.position.set(quarryX, quarryY + 1.2, quarryZ)
+    quarryMesh.castShadow = true
+    quarryMesh.receiveShadow = true
+    this._hubAutomationGroup.add(quarryMesh)
+
+    let boxMesh
+    const resource = this.resources.items.chest_closed
+    if (resource) {
+      boxMesh = resource.scene.clone()
+      boxMesh.scale.set(0.7, 0.7, 0.7)
+    }
+    else {
+      boxMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1.2, 0.9, 1.2),
+        new THREE.MeshStandardMaterial({ color: 0xC29A5B, roughness: 0.75, metalness: 0.05 }),
+      )
+    }
+    boxMesh.position.set(boxX, boxY + 0.5, boxZ)
+    this._hubAutomationGroup.add(boxMesh)
+
+    this._hubDropGeo = new THREE.IcosahedronGeometry(0.22, 0)
+    this._hubDropMaterials = {
+      stone: new THREE.MeshStandardMaterial({ color: 0x8B8B8B, roughness: 0.95, metalness: 0.0 }),
+      default: new THREE.MeshStandardMaterial({ color: 0xCCCCCC, roughness: 0.9, metalness: 0.0 }),
+    }
+  }
+
+  _spawnHubDrop(itemId, count, x, z) {
+    if (!this._hubDropsGroup)
+      return null
+    const id = `drop_${this._hubDropSeq++}`
+    const mat = this._hubDropMaterials?.[itemId] || this._hubDropMaterials?.default
+    const mesh = new THREE.Mesh(this._hubDropGeo, mat)
+    const y = this._getSurfaceY(x, z) + 0.25
+    mesh.position.set(x, y, z)
+    mesh.castShadow = true
+    mesh.receiveShadow = true
+    this._hubDropsGroup.add(mesh)
+    this._hubDrops.push({
+      id,
+      itemId,
+      count: Math.max(1, Math.floor(Number(count) || 1)),
+      mesh,
+      baseY: y,
+      age: 0,
+    })
+    return id
+  }
+
+  _removeHubDropById(id) {
+    if (!id || !this._hubDrops || this._hubDrops.length === 0)
+      return null
+    const index = this._hubDrops.findIndex(d => d.id === id)
+    if (index < 0)
+      return null
+    const drop = this._hubDrops[index]
+    if (drop?.mesh) {
+      drop.mesh.visible = false
+      drop.mesh.removeFromParent?.()
+    }
+    this._hubDrops.splice(index, 1)
+    return drop
+  }
+
+  _findNearestHubDrop(x, z, maxDist) {
+    if (!this._hubDrops || this._hubDrops.length === 0)
+      return null
+    const max = Number(maxDist) || 0
+    const maxD2 = max * max
+    let best = null
+    let bestD2 = Infinity
+    for (const drop of this._hubDrops) {
+      const pos = drop?.mesh?.position
+      if (!pos)
+        continue
+      const dx = pos.x - x
+      const dz = pos.z - z
+      const d2 = dx * dx + dz * dz
+      if (d2 > maxD2)
+        continue
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = drop
+      }
+    }
+    return best
+  }
+
+  _updateHubDrops() {
+    if (!this._hubDrops || this._hubDrops.length === 0)
+      return
+    const dt = this.experience.time.delta * 0.001
+    const t = (this.experience.time.elapsed ?? 0) * 0.001
+    for (let i = this._hubDrops.length - 1; i >= 0; i--) {
+      const drop = this._hubDrops[i]
+      if (!drop?.mesh) {
+        this._hubDrops.splice(i, 1)
+        continue
+      }
+      drop.age += dt
+      if (drop.age > 160) {
+        drop.mesh.visible = false
+        drop.mesh.removeFromParent?.()
+        this._hubDrops.splice(i, 1)
+        continue
+      }
+      drop.mesh.rotation.y += 1.15 * dt
+      drop.mesh.position.y = drop.baseY + Math.sin(t * 2.2 + i) * 0.06
+    }
+  }
+
   _updateInteractables() {
     if (!this.player || !this.interactables || this.interactables.length === 0)
       return
@@ -1450,37 +1653,64 @@ export default class World {
 
   _initAnimals() {
     this.animals = []
+    if (this.animalsGroup) {
+      this.animalsGroup.clear()
+      this.animalsGroup.removeFromParent?.()
+    }
     this.animalsGroup = new THREE.Group()
     this.scene.add(this.animalsGroup)
 
     const types = ['animal_pig', 'animal_sheep', 'animal_chicken', 'animal_cat', 'animal_wolf', 'animal_horse', 'animal_dog']
     const count = 15
+    const centerX = this._hubCenter?.x ?? 0
+    const centerZ = this._hubCenter?.z ?? 0
 
-    for (let i = 0; i < count; i++) {
-      const type = types[Math.floor(Math.random() * types.length)]
-      // Random position within safe range
-      const range = 40
-      const x = (Math.random() - 0.5) * 2 * range
-      const z = (Math.random() - 0.5) * 2 * range
+    const seeds = [
+      { type: 'animal_pig', role: 'miner', label: '矿工鼠', dx: 6, dz: -6 },
+      { type: 'animal_sheep', role: 'carrier', label: '绵绵球', dx: -6, dz: -6 },
+    ]
 
+    const spawnAnimal = (cfg) => {
+      const x = centerX + (cfg.dx ?? 0)
+      const z = centerZ + (cfg.dz ?? 0)
       const y = this._getSurfaceY(x, z)
 
       const animal = new HumanoidEnemy({
         position: new THREE.Vector3(x, y, z),
         scale: 0.8,
-        type,
+        type: cfg.type,
       })
 
+      animal._resourceKey = cfg.type
+      animal._typeLabel = cfg.label || cfg.type
       animal.group.rotation.y = Math.random() * Math.PI * 2
       animal.addTo(this.animalsGroup)
 
-      // Custom behavior state
       animal.behavior = {
         state: 'idle',
-        timer: Math.random() * 5,
+        timer: Math.random() * 2,
+        role: cfg.role || null,
+        carrierEnabled: cfg.role !== 'carrier',
+        carrying: null,
+        spawnCooldown: 0,
+        targetDropId: null,
+        wasThrown: false,
       }
 
       this.animals.push(animal)
+    }
+
+    for (const cfg of seeds)
+      spawnAnimal(cfg)
+
+    for (let i = seeds.length; i < count; i++) {
+      const type = types[Math.floor(Math.random() * types.length)]
+      // Random position within safe range
+      const range = 40
+      const x = centerX + (Math.random() - 0.5) * 2 * range
+      const z = centerZ + (Math.random() - 0.5) * 2 * range
+
+      spawnAnimal({ type, dx: x - centerX, dz: z - centerZ, role: null, label: type })
     }
   }
 
@@ -1526,6 +1756,8 @@ export default class World {
         animal.group.position.y += physics.vy * dt
         animal.group.position.z += physics.vz * dt
         animal.group.rotation.y += (physics.spin || 0) * dt
+        animal.group.rotation.x += (physics.rollX || 0) * dt
+        animal.group.rotation.z += (physics.rollZ || 0) * dt
 
         const pos = animal.group.position
         const groundY = this._getSurfaceY(pos.x, pos.z)
@@ -1536,6 +1768,8 @@ export default class World {
             physics.vx *= 0.72
             physics.vz *= 0.72
             physics.spin *= 0.7
+            physics.rollX = (physics.rollX || 0) * 0.75
+            physics.rollZ = (physics.rollZ || 0) * 0.75
             physics.bounces = (physics.bounces || 0) + 1
           }
         }
@@ -1543,11 +1777,175 @@ export default class World {
         const speed = Math.hypot(physics.vx, physics.vy, physics.vz)
         if ((physics.bounces || 0) >= 4 || speed < 1.2) {
           data.physics = null
-          data.state = 'idle'
-          data.timer = 2 + Math.random() * 2
-          animal.playAnimation('Idle')
+          const quarry = this._hubAutomation?.quarry
+          const box = this._hubAutomation?.box
+          const role = data.role || null
+          const wasThrown = !!data.wasThrown
+          data.wasThrown = false
+
+          const dxq = quarry ? (pos.x - quarry.x) : 0
+          const dzq = quarry ? (pos.z - quarry.z) : 0
+          const d2q = quarry ? (dxq * dxq + dzq * dzq) : Infinity
+
+          const dxb = box ? (pos.x - box.x) : 0
+          const dzb = box ? (pos.z - box.z) : 0
+          const d2b = box ? (dxb * dxb + dzb * dzb) : Infinity
+
+          if (wasThrown && role === 'miner' && quarry && d2q <= quarry.radius * quarry.radius) {
+            data.state = 'mining'
+            data.spawnCooldown = 0.35 + Math.random() * 0.25
+            data.timer = 9999
+            animal.playAnimation?.('Walk')
+            animal.group.rotation.x = 0
+            animal.group.rotation.z = 0
+            this._spawnAnimalThought(animal, '💡', 1.1)
+            emitter.emit('dungeon:toast', { text: '矿工鼠开始挖矿' })
+          }
+          else if (wasThrown && role === 'carrier' && quarry && d2q <= (quarry.radius + 4.0) * (quarry.radius + 4.0)) {
+            data.state = 'idle'
+            data.timer = 1.1 + Math.random() * 1.2
+            data.carrierEnabled = true
+            animal.playAnimation?.('Idle')
+            animal.group.rotation.x = 0
+            animal.group.rotation.z = 0
+            this._spawnAnimalThought(animal, '💡', 0.9)
+            emitter.emit('dungeon:toast', { text: '绵绵球准备搬运' })
+          }
+          else if (role === 'carrier' && box && d2b <= (box.radius + 2.0) * (box.radius + 2.0)) {
+            data.state = 'idle'
+            data.timer = 1.1 + Math.random() * 1.2
+            animal.playAnimation?.('Idle')
+            animal.group.rotation.x = 0
+            animal.group.rotation.z = 0
+          }
+          else {
+            data.state = 'idle'
+            data.timer = 2 + Math.random() * 2
+            animal.playAnimation('Idle')
+            animal.group.rotation.x = 0
+            animal.group.rotation.z = 0
+          }
         }
         return
+      }
+
+      if (data.state === 'mining') {
+        const quarry = this._hubAutomation?.quarry
+        if (!quarry) {
+          data.state = 'idle'
+          data.timer = 1 + Math.random() * 2
+          animal.playAnimation?.('Idle')
+          return
+        }
+        const pos = animal.group.position
+        const dx = pos.x - quarry.x
+        const dz = pos.z - quarry.z
+        const d2 = dx * dx + dz * dz
+        if (d2 > (quarry.radius + 1.25) * (quarry.radius + 1.25)) {
+          data.state = 'idle'
+          data.timer = 1 + Math.random() * 2
+          animal.playAnimation?.('Idle')
+          return
+        }
+        animal.group.rotation.y += 6.0 * dt
+        data.spawnCooldown -= dt
+        if (data.spawnCooldown <= 0) {
+          data.spawnCooldown = 0.75 + Math.random() * 0.35
+          if ((this._hubDrops?.length ?? 0) < 40) {
+            const ox = (Math.random() - 0.5) * 1.8
+            const oz = (Math.random() - 0.5) * 1.8
+            this._spawnHubDrop('stone', 1, quarry.x + ox, quarry.z + oz)
+          }
+        }
+        const groundY = this._getSurfaceY(pos.x, pos.z)
+        animal.group.position.y += (groundY - animal.group.position.y) * 0.18
+        return
+      }
+
+      if (data.state === 'carry_pickup') {
+        const targetDrop = this._hubDrops?.find(d => d.id === data.targetDropId) || null
+        if (!targetDrop?.mesh) {
+          data.state = 'idle'
+          data.timer = 1 + Math.random() * 2
+          data.targetDropId = null
+          animal.playAnimation?.('Idle')
+          return
+        }
+        const pos = animal.group.position
+        const tx = targetDrop.mesh.position.x
+        const tz = targetDrop.mesh.position.z
+        const dx = tx - pos.x
+        const dz = tz - pos.z
+        const dist = Math.hypot(dx, dz)
+        if (dist <= 0.75) {
+          const removed = this._removeHubDropById(targetDrop.id)
+          if (removed) {
+            data.carrying = { itemId: removed.itemId, count: removed.count }
+            data.state = 'carry_to_box'
+            data.targetDropId = null
+            animal.playAnimation?.('Walk')
+          }
+          else {
+            data.state = 'idle'
+            data.timer = 1 + Math.random() * 2
+            data.targetDropId = null
+            animal.playAnimation?.('Idle')
+          }
+          return
+        }
+        const nx = dx / Math.max(0.0001, dist)
+        const nz = dz / Math.max(0.0001, dist)
+        const speed = 2.05 * dt
+        pos.x += nx * speed
+        pos.z += nz * speed
+        animal.group.rotation.y = Math.atan2(nx, nz)
+        const groundY = this._getSurfaceY(pos.x, pos.z)
+        animal.group.position.y += (groundY - animal.group.position.y) * 0.15
+        return
+      }
+
+      if (data.state === 'carry_to_box') {
+        const box = this._hubAutomation?.box
+        if (!box || !data.carrying) {
+          data.state = 'idle'
+          data.timer = 1 + Math.random() * 2
+          data.carrying = null
+          animal.playAnimation?.('Idle')
+          return
+        }
+        const pos = animal.group.position
+        const dx = box.x - pos.x
+        const dz = box.z - pos.z
+        const dist = Math.hypot(dx, dz)
+        if (dist <= 1.2) {
+          this._addInventoryItem('warehouse', data.carrying.itemId, data.carrying.count)
+          emitter.emit('dungeon:toast', { text: `入库：${data.carrying.itemId} x${data.carrying.count}` })
+          data.carrying = null
+          data.state = 'idle'
+          data.timer = 1.2 + Math.random() * 1.8
+          animal.playAnimation?.('Idle')
+          return
+        }
+        const nx = dx / Math.max(0.0001, dist)
+        const nz = dz / Math.max(0.0001, dist)
+        const speed = 2.15 * dt
+        pos.x += nx * speed
+        pos.z += nz * speed
+        animal.group.rotation.y = Math.atan2(nx, nz)
+        const groundY = this._getSurfaceY(pos.x, pos.z)
+        animal.group.position.y += (groundY - animal.group.position.y) * 0.18
+        return
+      }
+
+      if (data.role === 'carrier' && data.carrierEnabled && (data.state === 'idle' || data.state === 'walk') && !data.carrying) {
+        const pos = animal.group.position
+        const nearest = this._findNearestHubDrop(pos.x, pos.z, 10)
+        if (nearest) {
+          data.state = 'carry_pickup'
+          data.targetDropId = nearest.id
+          animal.playAnimation?.('Walk')
+          return
+        }
       }
 
       data.timer -= dt
@@ -1774,6 +2172,7 @@ export default class World {
       this._updateInteractables()
       this._updatePortals()
       this._updateAnimals()
+      this._updateHubDrops()
 
       if (!this.player)
         return
@@ -1855,8 +2254,22 @@ export default class World {
     this._portalMeshes?.removeFromParent?.()
     this._interactablesGroup?.clear?.()
     this._interactablesGroup?.removeFromParent?.()
+    this.animalsGroup?.clear?.()
+    this.animalsGroup?.removeFromParent?.()
+    this._hubAutomationGroup?.clear?.()
+    this._hubAutomationGroup?.removeFromParent?.()
+    this._hubDropsGroup?.clear?.()
+    this._hubDropsGroup?.removeFromParent?.()
     this._dungeonGroup?.clear?.()
     this._dungeonGroup?.removeFromParent?.()
+    this._hubDropGeo?.dispose?.()
+    this._hubDropGeo = null
+    if (this._hubDropMaterials) {
+      for (const m of Object.values(this._hubDropMaterials)) {
+        m?.dispose?.()
+      }
+    }
+    this._hubDropMaterials = null
     if (this._onInteract)
       emitter.off('input:interact', this._onInteract)
     if (this._onInteractableClose)
