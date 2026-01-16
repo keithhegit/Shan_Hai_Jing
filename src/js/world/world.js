@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import CameraRig from '../camera/camera-rig.js'
 import { CHUNK_BASIC_CONFIG, TERRAIN_PARAMS } from '../config/chunk-config.js'
 import Experience from '../experience.js'
@@ -58,6 +59,49 @@ export default class World {
     this.portals = []
 
     this._inventory = this._loadInventory()
+    this._inventoryConfig = {
+      backpack: { slots: 24, maxWeight: 60 },
+      itemWeights: {
+        stone: 1,
+        fence: 4,
+        crystal_big: 6,
+        crystal_small: 3,
+        Axe_Wood: 4,
+        Axe_Stone: 5,
+        Axe_Gold: 4,
+        Axe_Diamond: 6,
+        Pickaxe_Wood: 4,
+        Pickaxe_Stone: 5,
+        Pickaxe_Gold: 4,
+        Pickaxe_Diamond: 6,
+        Shovel_Wood: 3,
+        Shovel_Stone: 4,
+        Shovel_Gold: 3,
+        Shovel_Diamond: 5,
+        Sword_Wood: 3,
+        Sword_Stone: 4,
+        Sword_Gold: 3,
+        Sword_Diamond: 5,
+      },
+    }
+    this._toolLootPool = [
+      'Axe_Wood',
+      'Axe_Stone',
+      'Axe_Gold',
+      'Axe_Diamond',
+      'Pickaxe_Wood',
+      'Pickaxe_Stone',
+      'Pickaxe_Gold',
+      'Pickaxe_Diamond',
+      'Shovel_Wood',
+      'Shovel_Stone',
+      'Shovel_Gold',
+      'Shovel_Diamond',
+      'Sword_Wood',
+      'Sword_Stone',
+      'Sword_Gold',
+      'Sword_Diamond',
+    ]
     this._inventorySaveTimer = null
     this._activeInventoryPanel = null
 
@@ -131,12 +175,8 @@ export default class World {
           this._throwCarriedAnimal()
           return
         }
-        if (event.button === 0 && !this.blockRaycaster?.current) {
+        if (event.button === 0) {
           this._fireMatterGun()
-          return
-        }
-        if (event.button === 0 && this.blockRaycaster?.current) {
-          // ... logic disabled
         }
       }
       emitter.on('input:mouse_down', this._onMouseDown)
@@ -238,6 +278,18 @@ export default class World {
           return
 
         this._addInventoryItem('backpack', 'fence', 1)
+        const pool = this._toolLootPool || []
+        if (pool.length > 0) {
+          const toolId = pool[Math.floor(Math.random() * pool.length)]
+          if (this._canAddToBackpack(toolId, 1)) {
+            this._addInventoryItem('backpack', toolId, 1)
+            emitter.emit('dungeon:toast', { text: `获得：${this._getModelFilenameByResourceKey(toolId)} x1（已放入背包）` })
+          }
+          else {
+            this._addInventoryItem('warehouse', toolId, 1)
+            emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(toolId)} x1（已入库）` })
+          }
+        }
         item.read = true
         if (item.mesh) {
           item.mesh.visible = false
@@ -532,23 +584,134 @@ export default class World {
     return Object.values(items || {}).reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0)
   }
 
+  _getItemWeight(itemId) {
+    const w = this._inventoryConfig?.itemWeights?.[itemId]
+    return Number.isFinite(w) ? w : 1
+  }
+
+  _getBackpackMaxSlots() {
+    const v = this._inventoryConfig?.backpack?.slots
+    return Number.isFinite(v) ? v : 24
+  }
+
+  _getBackpackMaxWeight() {
+    const v = this._inventoryConfig?.backpack?.maxWeight
+    return Number.isFinite(v) ? v : 60
+  }
+
+  _getBagWeight(items) {
+    let sum = 0
+    for (const [id, count] of Object.entries(items || {})) {
+      const n = Math.max(0, Math.floor(Number(count) || 0))
+      if (n <= 0)
+        continue
+      sum += this._getItemWeight(id) * n
+    }
+    return sum
+  }
+
+  _getResourcePathByKey(resourceKey) {
+    const list = this.resources?.sources || []
+    const found = list.find(s => s?.name === resourceKey)
+    return found?.path || ''
+  }
+
+  _getModelFilenameByResourceKey(resourceKey) {
+    const path = this._getResourcePathByKey(resourceKey)
+    if (!path)
+      return resourceKey || ''
+    if (!String(path).startsWith('models/'))
+      return resourceKey || ''
+    const parts = String(path).split('/')
+    return parts[parts.length - 1] || resourceKey || ''
+  }
+
+  _createNameLabel(text) {
+    const div = document.createElement('div')
+    div.textContent = String(text || '')
+    div.style.color = 'rgba(255,255,255,0.95)'
+    div.style.fontFamily = 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial'
+    div.style.fontSize = '12px'
+    div.style.fontWeight = '700'
+    div.style.padding = '3px 6px'
+    div.style.background = 'rgba(0,0,0,0.45)'
+    div.style.border = '1px solid rgba(255,255,255,0.15)'
+    div.style.borderRadius = '8px'
+    div.style.pointerEvents = 'none'
+    div.style.whiteSpace = 'nowrap'
+
+    return new CSS2DObject(div)
+  }
+
+  _attachNameLabel(target, text, y = 1.25) {
+    if (!target)
+      return null
+    if (!target.userData)
+      target.userData = {}
+    if (target.userData._nameLabel) {
+      const el = target.userData._nameLabel.element
+      if (el)
+        el.textContent = String(text || '')
+      return target.userData._nameLabel
+    }
+
+    const label = this._createNameLabel(text)
+    label.position.set(0, y, 0)
+    target.add(label)
+    target.userData._nameLabel = label
+    return label
+  }
+
+  _canAddToBackpack(itemId, amount = 1) {
+    const items = this._getBagItems('backpack')
+    const delta = Math.max(0, Math.floor(Number(amount) || 0))
+    if (!itemId || delta <= 0)
+      return false
+
+    const maxSlots = this._getBackpackMaxSlots()
+    const stacks = Object.keys(items || {}).length
+    const needsNewSlot = !Object.prototype.hasOwnProperty.call(items, itemId)
+    if (needsNewSlot && stacks + 1 > maxSlots)
+      return false
+
+    const maxWeight = this._getBackpackMaxWeight()
+    const weight = this._getBagWeight(items)
+    const nextWeight = weight + this._getItemWeight(itemId) * delta
+    if (nextWeight > maxWeight)
+      return false
+
+    return true
+  }
+
   _emitInventorySummary() {
     const backpackItems = this._getBagItems('backpack')
     const warehouseItems = this._getBagItems('warehouse')
+    const backpackWeight = this._getBagWeight(backpackItems)
     emitter.emit('inventory:summary', {
       backpackTotal: this._getItemTotalCount(backpackItems),
       warehouseTotal: this._getItemTotalCount(warehouseItems),
       backpackStacks: Object.keys(backpackItems).length,
       warehouseStacks: Object.keys(warehouseItems).length,
+      backpackWeight,
+      backpackMaxWeight: this._getBackpackMaxWeight(),
+      backpackSlots: Object.keys(backpackItems).length,
+      backpackMaxSlots: this._getBackpackMaxSlots(),
       carriedPet: this._carriedAnimal?.group ? (this._carriedAnimal._typeLabel || this._carriedAnimal._resourceKey || '') : '',
     })
   }
 
   _emitInventoryState() {
+    const backpackItems = this._getBagItems('backpack')
     emitter.emit('inventory:update', {
       panel: this._activeInventoryPanel,
-      backpack: { ...this._getBagItems('backpack') },
+      backpack: { ...backpackItems },
       warehouse: { ...this._getBagItems('warehouse') },
+      backpackMeta: {
+        slots: Object.keys(backpackItems).length,
+        maxSlots: this._getBackpackMaxSlots(),
+        weight: this._getBagWeight(backpackItems),
+        maxWeight: this._getBackpackMaxWeight(),
+      },
     })
   }
 
@@ -592,6 +755,10 @@ export default class World {
     const delta = Math.max(0, Math.floor(Number(amount) || 0))
     if (!itemId || delta <= 0)
       return
+    if (bagName === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
+      emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}` })
+      return
+    }
     items[itemId] = (items[itemId] || 0) + delta
     this._emitInventorySummary()
     this._emitInventoryState()
@@ -624,6 +791,11 @@ export default class World {
     const amount = payload?.amount ?? 1
     if (!from || !to || from === to || !itemId)
       return
+    const delta = Math.max(0, Math.floor(Number(amount) || 0))
+    if (to === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
+      emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}` })
+      return
+    }
     const ok = this._removeInventoryItem(from, itemId, amount)
     if (!ok)
       return
@@ -643,8 +815,12 @@ export default class World {
     const camera = this.experience.camera?.instance
     if (!camera)
       return null
-    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 10
+    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 1.35
     const minDot = Number.isFinite(options.minDot) ? options.minDot : 0.86
+
+    const playerPos = this.player.getPosition?.()
+    if (!playerPos)
+      return null
 
     const camPos = new THREE.Vector3()
     const camDir = new THREE.Vector3()
@@ -665,17 +841,20 @@ export default class World {
       animal.group.getWorldPosition(aPos)
       aPos.y += 0.9
 
-      const dx = aPos.x - camPos.x
-      const dy = aPos.y - camPos.y
-      const dz = aPos.z - camPos.z
-      const dist = Math.hypot(dx, dy, dz)
-      if (dist > maxDist)
+      const dx = aPos.x - playerPos.x
+      const dz = aPos.z - playerPos.z
+      const dist = Math.hypot(dx, dz)
+      if (dist > maxDist || dist < 0.0001)
         continue
-      if (dist < 0.0001)
+      const vx = aPos.x - camPos.x
+      const vy = aPos.y - camPos.y
+      const vz = aPos.z - camPos.z
+      const vLen = Math.hypot(vx, vy, vz)
+      if (vLen < 0.0001)
         continue
-      const nx = dx / dist
-      const ny = dy / dist
-      const nz = dz / dist
+      const nx = vx / vLen
+      const ny = vy / vLen
+      const nz = vz / vLen
       const dot = nx * camDir.x + ny * camDir.y + nz * camDir.z
       if (dot < minDot)
         continue
@@ -816,21 +995,6 @@ export default class World {
       return
 
     if (this.currentWorld === 'hub') {
-      if (!this._carriedAnimal) {
-        const target = this._findGrabCandidateAnimal({ maxDist: 16, minDot: 0.74 })
-        if (target) {
-          this._carriedAnimal = target
-          if (!this._carriedAnimal.behavior)
-            this._carriedAnimal.behavior = {}
-          this._carriedAnimal.behavior.state = 'carried'
-          this._carriedAnimal.behavior.timer = 0
-          this._carriedAnimal.behavior.physics = null
-          this._carriedAnimal.playAnimation?.('Idle')
-          this._emitInventorySummary()
-          return
-        }
-      }
-
       const drop = this._findFrontHubDrop({ maxDist: 14, minDot: 0.72 })
       if (drop)
         this._suckHubDrop(drop)
@@ -1230,6 +1394,12 @@ export default class World {
       z: exit.z,
       range: 3,
     }
+    if (portal.id === 'mine') {
+      exitMesh.position.set(spawn.x, spawn.y + 1.2, spawn.z)
+      this._dungeonExit.x = spawn.x
+      this._dungeonExit.z = spawn.z
+      this._dungeonExit.range = 3.5
+    }
 
     this.currentWorld = 'dungeon'
     this._activeInteractableId = null
@@ -1460,6 +1630,7 @@ export default class World {
       })
       group.add(mesh)
       const itemId = cfg.big ? 'crystal_big' : 'crystal_small'
+      this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), cfg.big ? 1.25 : 0.95)
       this._mineOres.push({
         mesh,
         itemId,
@@ -1770,6 +1941,7 @@ export default class World {
     mesh.position.set(x, y, z)
     mesh.castShadow = true
     mesh.receiveShadow = true
+    this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), 0.45)
     this._hubDropsGroup.add(mesh)
     this._hubDrops.push({
       id,
@@ -1926,6 +2098,7 @@ export default class World {
 
       animal._resourceKey = cfg.type
       animal._typeLabel = cfg.label || cfg.type
+      this._attachNameLabel(animal.group, this._getModelFilenameByResourceKey(cfg.type), 2.15)
       animal.group.rotation.y = Math.random() * Math.PI * 2
       animal.addTo(this.animalsGroup)
 

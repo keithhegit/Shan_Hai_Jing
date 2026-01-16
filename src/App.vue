@@ -134,6 +134,12 @@ function bagEntries(bag) {
 function itemLabel(id) {
   if (id === 'fence')
     return 'Fence'
+  if (id === 'crystal_big')
+    return 'Crystal_Big.gltf'
+  if (id === 'crystal_small')
+    return 'Crystal_Small.gltf'
+  if (String(id).startsWith('Axe_') || String(id).startsWith('Pickaxe_') || String(id).startsWith('Shovel_') || String(id).startsWith('Sword_'))
+    return `${id}.gltf`
   return id
 }
 

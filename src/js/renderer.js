@@ -4,6 +4,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js'
+import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 
 // 速度线 Shader
 import speedLinesFragmentShader from '../shaders/speedlines/fragment.glsl'
@@ -47,6 +48,7 @@ export default class Renderer {
 
     this.setInstance()
     this.setPostProcess()
+    this.setLabelRenderer()
 
     if (this.debug.active) {
       this.debugInit()
@@ -68,6 +70,17 @@ export default class Renderer {
     this.instance.setClearColor('#000000')
     this.instance.setSize(this.sizes.width, this.sizes.height)
     this.instance.setPixelRatio(this.sizes.pixelRatio)
+  }
+
+  setLabelRenderer() {
+    this.labelRenderer = new CSS2DRenderer()
+    this.labelRenderer.setSize(this.sizes.width, this.sizes.height)
+    this.labelRenderer.domElement.style.position = 'fixed'
+    this.labelRenderer.domElement.style.top = '0'
+    this.labelRenderer.domElement.style.left = '0'
+    this.labelRenderer.domElement.style.pointerEvents = 'none'
+    this.labelRenderer.domElement.style.zIndex = '10'
+    document.body.appendChild(this.labelRenderer.domElement)
   }
 
   /**
@@ -285,6 +298,8 @@ export default class Renderer {
     // Resize Composer
     this.composer.setSize(this.sizes.width, this.sizes.height)
     this.composer.setPixelRatio(this.sizes.pixelRatio)
+
+    this.labelRenderer?.setSize?.(this.sizes.width, this.sizes.height)
   }
 
   /**
@@ -307,6 +322,8 @@ export default class Renderer {
 
     // 使用 EffectComposer 渲染（包含所有后期处理）
     this.composer.render()
+
+    this.labelRenderer?.render?.(this.scene, this.camera.instance)
   }
 
   /**
@@ -342,6 +359,11 @@ export default class Renderer {
       this.instance.forceContextLoss()
       this.instance.dispose()
       this.instance.domElement = null
+    }
+
+    if (this.labelRenderer) {
+      this.labelRenderer.domElement?.remove?.()
+      this.labelRenderer = null
     }
   }
 }
