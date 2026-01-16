@@ -20,6 +20,7 @@ let dungeonToastTimer = null
 const lockState = ref(null)
 const inventoryPanel = ref(null)
 const inventoryData = ref({ panel: null, backpack: {}, warehouse: {} })
+const chestModal = ref(null)
 
 function onPortalPrompt(payload) {
   portalPrompt.value = payload
@@ -98,6 +99,38 @@ function triggerInteractableAction(actionId) {
   closeInteractableModal()
 }
 
+function onChestOpen(payload) {
+  chestModal.value = payload
+}
+
+function onChestUpdate(payload) {
+  if (!payload?.id)
+    return
+  if (!chestModal.value || chestModal.value.id !== payload.id)
+    return
+  chestModal.value = { ...chestModal.value, ...payload }
+}
+
+function closeChestModal() {
+  if (!chestModal.value)
+    return
+  const id = chestModal.value.id
+  chestModal.value = null
+  emitter.emit('chest:close', { id })
+}
+
+function useChestKey(keyId) {
+  if (!chestModal.value || !keyId)
+    return
+  emitter.emit('chest:use_key', { id: chestModal.value.id, keyId })
+}
+
+function takeChestItem(itemId, amount = 1) {
+  if (!chestModal.value || !itemId)
+    return
+  emitter.emit('chest:take', { id: chestModal.value.id, itemId, amount })
+}
+
 function onInventoryOpen(payload) {
   inventoryPanel.value = payload?.panel || 'backpack'
 }
@@ -134,6 +167,14 @@ function bagEntries(bag) {
 function itemLabel(id) {
   if (id === 'fence')
     return 'Fence'
+  if (id === 'key_plains')
+    return '平原钥匙'
+  if (id === 'key_snow')
+    return '雪原钥匙'
+  if (id === 'key_desert')
+    return '沙漠钥匙'
+  if (id === 'key_forest')
+    return '森林钥匙'
   if (id === 'crystal_big')
     return 'Crystal_Big.gltf'
   if (id === 'crystal_small')
@@ -143,8 +184,20 @@ function itemLabel(id) {
   return id
 }
 
+function isKeyItem(id) {
+  return String(id).startsWith('key_')
+}
+
+function chestKeyEntries() {
+  return bagEntries(inventoryData.value?.backpack).filter(row => isKeyItem(row.id))
+}
+
 function onKeyDown(event) {
   const key = event.key?.toLowerCase?.() ?? event.key
+  if (chestModal.value && key === 'escape') {
+    closeChestModal()
+    return
+  }
   if (inventoryPanel.value && key === 'escape') {
     closeInventoryPanel()
     return
@@ -176,6 +229,8 @@ onMounted(() => {
   emitter.on('inventory:open', onInventoryOpen)
   emitter.on('inventory:close_ui', onInventoryCloseUi)
   emitter.on('inventory:update', onInventoryUpdate)
+  emitter.on('chest:open', onChestOpen)
+  emitter.on('chest:update', onChestUpdate)
   window.addEventListener('keydown', onKeyDown)
 })
 
@@ -196,6 +251,8 @@ onBeforeUnmount(() => {
   emitter.off('inventory:open', onInventoryOpen)
   emitter.off('inventory:close_ui', onInventoryCloseUi)
   emitter.off('inventory:update', onInventoryUpdate)
+  emitter.off('chest:open', onChestOpen)
+  emitter.off('chest:update', onChestUpdate)
   onDungeonToastClear()
   window.removeEventListener('keydown', onKeyDown)
   experience?.destroy()
@@ -212,7 +269,7 @@ onBeforeUnmount(() => {
     <!-- 小地图 (z-index: 1000) -->
     <MiniMap />
     <div
-      v-if="!interactableModal && !loadingState && dungeonProgress"
+      v-if="!interactableModal && !chestModal && !loadingState && dungeonProgress"
       class="pointer-events-none absolute left-1/2 top-6 z-[1800] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-full border border-white/20 bg-white/15 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md">
@@ -220,7 +277,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="!interactableModal && !loadingState && dungeonToast"
+      v-if="!interactableModal && !chestModal && !loadingState && dungeonToast"
       class="pointer-events-none absolute left-1/2 top-[3.75rem] z-[1800] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-full border border-white/20 bg-black/35 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md">
@@ -228,7 +285,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="!interactableModal && !loadingState && lockState"
+      v-if="!interactableModal && !chestModal && !loadingState && lockState"
       class="pointer-events-none absolute left-1/2 top-24 z-[1800] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-full border border-white/20 bg-black/35 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md">
@@ -236,7 +293,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="!interactableModal && !loadingState && (interactablePrompt || portalPrompt)"
+      v-if="!interactableModal && !chestModal && !loadingState && (interactablePrompt || portalPrompt)"
       class="pointer-events-none fixed left-1/2 top-[15vh] z-[9000] w-full max-w-[90vw] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-xl border border-white/20 bg-white/15 px-6 py-4 text-center text-white shadow-xl backdrop-blur-md">
@@ -250,7 +307,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="!interactableModal && !loadingState"
+      v-if="!interactableModal && !chestModal && !loadingState"
       class="pointer-events-none fixed right-6 top-6 z-[9000] w-[260px]"
     >
       <div class="rounded-2xl border border-white/15 bg-black/40 px-5 py-4 text-xs text-white shadow-2xl backdrop-blur-md">
@@ -329,7 +386,102 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="inventoryPanel && !interactableModal && !loadingState"
+      v-if="chestModal && !interactableModal && !loadingState"
+      class="absolute inset-0 z-[10500] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      @click.self="closeChestModal"
+    >
+      <div class="w-full max-w-[860px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+        <div class="flex items-start justify-between gap-4">
+          <div class="text-lg font-semibold drop-shadow">
+            {{ chestModal.title }}
+          </div>
+          <button
+            class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+            @click="closeChestModal"
+          >
+            关闭 (ESC)
+          </button>
+        </div>
+
+        <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div class="rounded-2xl border border-white/15 bg-black/30 p-4">
+            <div class="mb-3 flex items-center justify-between">
+              <div class="text-sm font-bold text-white/90">
+                背包钥匙
+              </div>
+            </div>
+            <div v-if="chestKeyEntries().length === 0" class="text-sm opacity-80">
+              空
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="row in chestKeyEntries()"
+                :key="`ck:${row.id}`"
+                class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-semibold">
+                    {{ itemLabel(row.id) }}
+                  </div>
+                  <div class="text-xs opacity-80">
+                    x{{ row.count }}
+                  </div>
+                </div>
+                <button
+                  class="shrink-0 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-40"
+                  :disabled="chestModal.unlocked || row.id !== chestModal.requiredKeyId"
+                  @click="useChestKey(row.id)"
+                >
+                  {{ chestModal.unlocked ? '已解锁' : '使用' }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-white/15 bg-black/30 p-4">
+            <div class="mb-3 flex items-center justify-between">
+              <div class="text-sm font-bold text-white/90">
+                宝箱
+              </div>
+              <div v-if="!chestModal.unlocked" class="text-xs opacity-85">
+                需要：{{ itemLabel(chestModal.requiredKeyId) }}
+              </div>
+            </div>
+            <div v-if="!chestModal.unlocked" class="text-sm opacity-80">
+              使用对应钥匙解锁后可查看内容
+            </div>
+            <div v-else-if="!chestModal.loot || chestModal.loot.length === 0" class="text-sm opacity-80">
+              空
+            </div>
+            <div v-else class="space-y-2">
+              <div
+                v-for="row in chestModal.loot"
+                :key="`cl:${row.id}`"
+                class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+              >
+                <div class="min-w-0">
+                  <div class="truncate text-sm font-semibold">
+                    {{ itemLabel(row.id) }}
+                  </div>
+                  <div class="text-xs opacity-80">
+                    x{{ row.count }}
+                  </div>
+                </div>
+                <button
+                  class="shrink-0 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                  @click="takeChestItem(row.id, 1)"
+                >
+                  拾取
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="inventoryPanel && !interactableModal && !chestModal && !loadingState"
       class="absolute inset-0 z-[11000] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
       @click.self="closeInventoryPanel"
     >

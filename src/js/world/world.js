@@ -104,6 +104,9 @@ export default class World {
     ]
     this._inventorySaveTimer = null
     this._activeInventoryPanel = null
+    this._lockedChests = this._loadLockedChests()
+    this._lockedChestsSaveTimer = null
+    this._activeChestId = null
 
     this._carriedAnimal = null
     this._hubAutomation = null
@@ -212,6 +215,48 @@ export default class World {
         if (this.isPaused)
           return
         if (this._activeInteractable) {
+          if (this._activeInteractable.pickupItemId) {
+            const itemId = this._activeInteractable.pickupItemId
+            const count = Math.max(1, Math.floor(Number(this._activeInteractable.pickupAmount) || 1))
+            if (this._canAddToBackpack(itemId, count)) {
+              this._addInventoryItem('backpack', itemId, count)
+              emitter.emit('dungeon:toast', { text: `获得：${this._getModelFilenameByResourceKey(itemId)} x${count}（已放入背包）` })
+            }
+            else {
+              this._addInventoryItem('warehouse', itemId, count)
+              emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(itemId)} x${count}（已入库）` })
+            }
+
+            this._activeInteractable.read = true
+            if (this._activeInteractable.mesh) {
+              this._activeInteractable.mesh.visible = false
+              this._activeInteractable.mesh.parent?.remove?.(this._activeInteractable.mesh)
+            }
+            if (this._activeInteractable.outline) {
+              this._activeInteractable.outline.visible = false
+              this._activeInteractable.outline.parent?.remove?.(this._activeInteractable.outline)
+            }
+            if (this.currentWorld === 'dungeon')
+              this._emitDungeonProgress()
+            this._scheduleInventorySave()
+            this._emitInventorySummary()
+            this._emitInventoryState()
+            emitter.emit('interactable:prompt_clear')
+            emitter.emit('portal:prompt_clear')
+            return
+          }
+          if (this._activeInteractable.openInventoryPanel) {
+            this._toggleInventoryPanel(this._activeInteractable.openInventoryPanel)
+            emitter.emit('interactable:prompt_clear')
+            emitter.emit('portal:prompt_clear')
+            return
+          }
+          if (this._activeInteractable.lockedChestId) {
+            this._openLockedChest(this._activeInteractable.lockedChestId)
+            emitter.emit('interactable:prompt_clear')
+            emitter.emit('portal:prompt_clear')
+            return
+          }
           this.isPaused = true
           this.experience.pointerLock?.exitLock?.()
           this._openedInteractableId = this._activeInteractable.id
@@ -361,6 +406,28 @@ export default class World {
       emitter.on('inventory:transfer', this._onInventoryTransfer)
       emitter.on('input:grab_pet', this._onGrabPet)
 
+      this._onChestClose = (payload) => {
+        const id = payload?.id || this._activeChestId
+        if (id && this._activeChestId === id) {
+          this._activeChestId = null
+        }
+        if (this.isPaused) {
+          this.isPaused = false
+          this._emitDungeonState()
+          this.experience.pointerLock?.requestLock?.()
+        }
+      }
+      this._onChestUseKey = (payload) => {
+        this._useKeyForLockedChest(payload)
+      }
+      this._onChestTakeItem = (payload) => {
+        this._takeLockedChestLoot(payload)
+      }
+
+      emitter.on('chest:close', this._onChestClose)
+      emitter.on('chest:use_key', this._onChestUseKey)
+      emitter.on('chest:take', this._onChestTakeItem)
+
       this._emitInventorySummary()
     })
   }
@@ -507,6 +574,42 @@ export default class World {
     }
   }
 
+  _loadLockedChests() {
+    try {
+      if (typeof window === 'undefined')
+        return {}
+      const raw = window.localStorage?.getItem?.('mmmc:locked_chests_v1')
+      if (!raw)
+        return {}
+      const parsed = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object')
+        return {}
+      return parsed
+    }
+    catch {
+      return {}
+    }
+  }
+
+  _saveLockedChestsNow() {
+    try {
+      if (typeof window === 'undefined')
+        return
+      window.localStorage?.setItem?.('mmmc:locked_chests_v1', JSON.stringify(this._lockedChests || {}))
+    }
+    catch {
+    }
+  }
+
+  _scheduleLockedChestsSave() {
+    if (this._lockedChestsSaveTimer)
+      clearTimeout(this._lockedChestsSaveTimer)
+    this._lockedChestsSaveTimer = setTimeout(() => {
+      this._lockedChestsSaveTimer = null
+      this._saveLockedChestsNow()
+    }, 250)
+  }
+
   _loadInventory() {
     try {
       if (typeof window === 'undefined')
@@ -620,6 +723,14 @@ export default class World {
   }
 
   _getModelFilenameByResourceKey(resourceKey) {
+    if (resourceKey === 'key_plains')
+      return '平原钥匙'
+    if (resourceKey === 'key_snow')
+      return '雪原钥匙'
+    if (resourceKey === 'key_desert')
+      return '沙漠钥匙'
+    if (resourceKey === 'key_forest')
+      return '森林钥匙'
     const path = this._getResourcePathByKey(resourceKey)
     if (!path)
       return resourceKey || ''
@@ -628,6 +739,168 @@ export default class World {
     const parts = String(path).split('/')
     const name = parts[parts.length - 1] || resourceKey || ''
     return String(name).replace(/\.(?:gltf|glb)$/i, '')
+  }
+
+  _getRequiredKeyForPortalChest(portalId) {
+    const requiredKeyByPortal = {
+      plains: 'key_forest',
+      snow: 'key_plains',
+      desert: 'key_snow',
+      forest: 'key_desert',
+    }
+    return requiredKeyByPortal?.[portalId] || null
+  }
+
+  _getLockedChestPayload(chestId) {
+    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    if (!chest)
+      return null
+    const state = this._lockedChests?.[chestId] || {}
+    const loot = state?.loot?.itemId
+      ? [{ id: state.loot.itemId, count: Math.max(1, Math.floor(Number(state.loot.count) || 1)) }]
+      : []
+    return {
+      id: chestId,
+      title: chest.title || '宝箱',
+      requiredKeyId: chest.requiredKeyId || null,
+      unlocked: !!state.unlocked,
+      looted: !!state.looted,
+      loot,
+    }
+  }
+
+  _openLockedChest(chestId) {
+    if (!chestId)
+      return
+    if (this._activeInventoryPanel)
+      this._closeInventoryPanel()
+
+    const payload = this._getLockedChestPayload(chestId)
+    if (!payload)
+      return
+
+    this._activeChestId = chestId
+    this.isPaused = true
+    this.experience.pointerLock?.exitLock?.()
+    this._emitDungeonState()
+    this._emitInventoryState()
+    emitter.emit('chest:open', payload)
+  }
+
+  _useKeyForLockedChest(payload) {
+    const chestId = payload?.id
+    const keyId = payload?.keyId
+    if (!chestId || !keyId)
+      return
+
+    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    if (!chest || chest.read)
+      return
+
+    const state = this._lockedChests?.[chestId] || {}
+    if (state.unlocked) {
+      emitter.emit('chest:update', this._getLockedChestPayload(chestId))
+      return
+    }
+
+    const requiredKeyId = chest.requiredKeyId
+    if (!requiredKeyId || keyId !== requiredKeyId) {
+      emitter.emit('dungeon:toast', { text: '钥匙不匹配' })
+      return
+    }
+
+    const backpack = this._getBagItems('backpack')
+    if (!backpack?.[keyId] || backpack[keyId] <= 0) {
+      emitter.emit('dungeon:toast', { text: '背包中没有对应钥匙' })
+      return
+    }
+
+    this._removeInventoryItem('backpack', keyId, 1)
+
+    let lootItemId = state?.loot?.itemId || null
+    let lootCount = state?.loot?.count || 0
+    if (!lootItemId) {
+      const pool = this._toolLootPool || []
+      lootItemId = pool.length ? pool[Math.floor(Math.random() * pool.length)] : 'fence'
+      lootCount = 1
+    }
+
+    this._lockedChests[chestId] = {
+      unlocked: true,
+      looted: false,
+      loot: { itemId: lootItemId, count: lootCount },
+    }
+
+    chest.unlocked = true
+    chest.hint = '按 E 打开宝箱'
+    chest.description = requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : chest.description
+
+    this._scheduleInventorySave()
+    this._scheduleLockedChestsSave()
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    emitter.emit('dungeon:toast', { text: `已解锁：${chest.title}` })
+    emitter.emit('chest:update', this._getLockedChestPayload(chestId))
+  }
+
+  _takeLockedChestLoot(payload) {
+    const chestId = payload?.id
+    const itemId = payload?.itemId
+    const amount = Math.max(1, Math.floor(Number(payload?.amount) || 1))
+    if (!chestId || !itemId)
+      return
+
+    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    if (!chest || chest.read)
+      return
+
+    const state = this._lockedChests?.[chestId] || {}
+    if (!state.unlocked || !state.loot?.itemId)
+      return
+    if (state.loot.itemId !== itemId)
+      return
+
+    const takeCount = Math.min(amount, Math.max(1, Math.floor(Number(state.loot.count) || 1)))
+
+    if (this._canAddToBackpack(itemId, takeCount)) {
+      this._addInventoryItem('backpack', itemId, takeCount)
+      emitter.emit('dungeon:toast', { text: `获得：${this._getModelFilenameByResourceKey(itemId)} x${takeCount}（已放入背包）` })
+    }
+    else {
+      this._addInventoryItem('warehouse', itemId, takeCount)
+      emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(itemId)} x${takeCount}（已入库）` })
+    }
+
+    const remaining = Math.max(0, Math.floor(Number(state.loot.count) || 1) - takeCount)
+    if (remaining <= 0) {
+      this._lockedChests[chestId] = { unlocked: true, looted: true, loot: null }
+      chest.read = true
+      chest.looted = true
+      chest.range = 0
+      chest.hint = '已开启'
+      if (chest.mesh) {
+        chest.mesh.visible = false
+        chest.mesh.parent?.remove?.(chest.mesh)
+      }
+      if (chest.outline) {
+        chest.outline.visible = false
+        chest.outline.parent?.remove?.(chest.outline)
+      }
+      if (this._activeInteractableId === chestId) {
+        this._activeInteractableId = null
+        this._activeInteractable = null
+        emitter.emit('interactable:prompt_clear')
+      }
+    }
+    else {
+      this._lockedChests[chestId] = { unlocked: true, looted: false, loot: { itemId, count: remaining } }
+    }
+
+    this._scheduleInventorySave()
+    this._scheduleLockedChestsSave()
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    emitter.emit('chest:update', this._getLockedChestPayload(chestId))
   }
 
   _createNameLabel(text) {
@@ -1797,7 +2070,8 @@ export default class World {
       if (this._activeInteractableId !== best.id) {
         this._activeInteractableId = best.id
         this._activeInteractable = best
-        emitter.emit('interactable:prompt', { title: best.title, hint: best.read ? '按 E 回顾' : '按 E 查看' })
+        const hint = best.hint || (best.read ? '按 E 回顾' : '按 E 查看')
+        emitter.emit('interactable:prompt', { title: best.title, hint })
       }
     }
     else if (this._activeInteractableId !== null && this._activeInteractable && this._activeInteractableId.startsWith('dungeon-')) {
@@ -1809,8 +2083,11 @@ export default class World {
     for (const item of this._dungeonInteractables) {
       if (item.outline)
         item.outline.visible = item.id === this._activeInteractableId
-      if (item.mesh)
-        item.mesh.rotation.y += 0.01
+      if (item.mesh) {
+        const speed = Number.isFinite(item.spinSpeed) ? item.spinSpeed : 0.01
+        if (speed)
+          item.mesh.rotation.y += speed
+      }
       if (item.outline && item.mesh)
         item.outline.rotation.y = item.mesh.rotation.y
     }
@@ -1832,11 +2109,13 @@ export default class World {
         z: centerZ + 4,
       },
       {
-        id: 'story-2',
-        title: '破损徽章',
-        description: '徽章背面刻着一行小字：别回头。',
+        id: 'warehouse',
+        title: '仓库',
+        description: '存放与取出物品。',
         x: centerX - 4,
         z: centerZ + 4,
+        hint: '按 E 打开仓库',
+        openInventoryPanel: 'warehouse',
       },
       {
         id: 'story-3',
@@ -1847,11 +2126,41 @@ export default class World {
       },
     ]
 
-    this.interactables = items.map((item) => {
+    const portalChestItems = (this.portals || [])
+      .filter(p => p?.id && p.id !== 'mine')
+      .map((portal) => {
+        const requiredKeyId = this._getRequiredKeyForPortalChest(portal.id)
+        const chestId = `portal-chest-${portal.id}`
+        const state = this._lockedChests?.[chestId] || {}
+        const ox = Math.sign((portal.anchor?.x ?? 0) - centerX) || 1
+        const oz = Math.sign((portal.anchor?.z ?? 0) - centerZ) || 1
+        const x = (portal.anchor?.x ?? 0) + ox * 2
+        const z = (portal.anchor?.z ?? 0) + oz * 2
+        const unlocked = !!state.unlocked
+        const looted = !!state.looted
+        return {
+          id: chestId,
+          title: `${portal.name}宝箱`,
+          description: requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : '需要钥匙解锁',
+          x,
+          z,
+          hint: looted ? '已开启' : (unlocked ? '按 E 打开宝箱' : '按 E 解锁宝箱'),
+          lockedChestId: chestId,
+          requiredKeyId,
+          unlocked,
+          looted,
+        }
+      })
+
+    this.interactables = [...items, ...portalChestItems].map((item) => {
       let mesh
-      if (item.id === 'story-2' && this.resources.items.chest_open) {
+      if (item.id === 'warehouse' && this.resources.items.chest_open) {
         mesh = this.resources.items.chest_open.scene.clone()
-        mesh.scale.set(2, 2, 2)
+        mesh.scale.set(0.5, 0.5, 0.5)
+      }
+      else if (item.lockedChestId && this.resources.items.chest_closed) {
+        mesh = this.resources.items.chest_closed.scene.clone()
+        mesh.scale.set(0.5, 0.5, 0.5)
       }
       else if (this.resources.items.chest_closed) {
         mesh = this.resources.items.chest_closed.scene.clone()
@@ -1872,7 +2181,7 @@ export default class World {
 
       const y = this._getSurfaceY(item.x, item.z)
       mesh.position.set(item.x, y + 0.5, item.z)
-      if (item.id === 'story-2') {
+      if (item.id === 'warehouse') {
         try {
           const box = new THREE.Box3().setFromObject(mesh)
           const dy = y - box.min.y
@@ -1905,9 +2214,9 @@ export default class World {
         mesh,
         outline,
         hitRadius,
-        range: 2.6,
-        read: false,
-        spinSpeed: item.id === 'story-2' ? 0 : 0.01,
+        range: item.looted ? 0 : (item.id === 'warehouse' ? 3.4 : (item.lockedChestId ? 3.0 : 2.6)),
+        read: !!item.looted,
+        spinSpeed: (item.id === 'warehouse' || item.lockedChestId) ? 0 : 0.01,
       }
     })
   }
@@ -2074,6 +2383,9 @@ export default class World {
     let best = null
     let bestD2 = Infinity
     for (const item of this.interactables) {
+      const r = Number(item?.range) || 0
+      if (r <= 0)
+        continue
       const dx = pos.x - item.x
       const dz = pos.z - item.z
       const d2 = dx * dx + dz * dz
@@ -2089,7 +2401,8 @@ export default class World {
       if (this._activeInteractableId !== best.id) {
         this._activeInteractableId = best.id
         this._activeInteractable = best
-        emitter.emit('interactable:prompt', { title: best.title, hint: best.read ? '按 E 回顾' : '按 E 查看' })
+        const hint = best.hint || (best.read ? '按 E 回顾' : '按 E 查看')
+        emitter.emit('interactable:prompt', { title: best.title, hint })
       }
     }
     else if (this._activeInteractableId !== null) {
@@ -2886,6 +3199,12 @@ export default class World {
       emitter.off('inventory:transfer', this._onInventoryTransfer)
     if (this._onGrabPet)
       emitter.off('input:grab_pet', this._onGrabPet)
+    if (this._onChestClose)
+      emitter.off('chest:close', this._onChestClose)
+    if (this._onChestUseKey)
+      emitter.off('chest:use_key', this._onChestUseKey)
+    if (this._onChestTakeItem)
+      emitter.off('chest:take', this._onChestTakeItem)
     if (this._onPunchStraight)
       emitter.off('input:punch_straight', this._onPunchStraight)
     if (this._onPunchHook)
@@ -2896,6 +3215,8 @@ export default class World {
       emitter.off('input:mouse_down', this._onMouseDown)
     if (this._inventorySaveTimer)
       clearTimeout(this._inventorySaveTimer)
+    if (this._lockedChestsSaveTimer)
+      clearTimeout(this._lockedChestsSaveTimer)
 
     // Clear terrainDataManager reference
     if (this.experience.terrainDataManager === this.chunkManager) {
@@ -3038,33 +3359,71 @@ export default class World {
     const id = `dungeon-${portalId}-${index}`
 
     let mesh
-    const resource = this.resources.items.chest_closed
-    if (resource) {
-      mesh = resource.scene.clone()
-      mesh.scale.set(0.5, 0.5, 0.5)
+    const keyItemId = portalId === 'plains' || portalId === 'snow' || portalId === 'desert' || portalId === 'forest'
+      ? `key_${portalId}`
+      : null
+
+    if (keyItemId) {
+      const resource = this.resources.items.key
+      if (resource?.scene) {
+        mesh = resource.scene.clone()
+        mesh.scale.set(0.9, 0.9, 0.9)
+      }
+      else {
+        const geometry = new THREE.BoxGeometry(0.5, 0.9, 0.18)
+        const material = new THREE.MeshStandardMaterial({ color: 0xFFDD88, roughness: 0.55, metalness: 0.25, emissive: 0x442200, emissiveIntensity: 0.35 })
+        mesh = new THREE.Mesh(geometry, material)
+      }
     }
     else {
-      const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8)
-      const material = new THREE.MeshStandardMaterial({ color: 0xFFD700 })
-      mesh = new THREE.Mesh(geometry, material)
+      const resource = this.resources.items.chest_closed
+      if (resource) {
+        mesh = resource.scene.clone()
+        mesh.scale.set(0.5, 0.5, 0.5)
+      }
+      else {
+        const geometry = new THREE.BoxGeometry(0.8, 0.8, 0.8)
+        const material = new THREE.MeshStandardMaterial({ color: 0xFFD700 })
+        mesh = new THREE.Mesh(geometry, material)
+      }
     }
 
     mesh.position.set(this._dungeonRewardPending.x, this._dungeonRewardPending.y + 0.5, this._dungeonRewardPending.z)
     this._dungeonInteractablesGroup.add(mesh)
 
-    const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
+    const hitRadius = this._getHitRadiusFromObject(mesh, keyItemId ? 0.6 : 0.9)
 
-    this._dungeonInteractables.push({
-      id,
-      title: '任务宝箱',
-      description: '你听见机关松动的声音，宝箱出现了。',
-      x: this._dungeonRewardPending.x,
-      z: this._dungeonRewardPending.z,
-      mesh,
-      hitRadius,
-      range: 2.6,
-      read: false,
-    })
+    if (keyItemId) {
+      this._dungeonInteractables.push({
+        id,
+        title: this._getModelFilenameByResourceKey(keyItemId),
+        description: '一把奇怪的钥匙，似乎能打开某处的宝箱。',
+        hint: '按 E 拾取',
+        pickupItemId: keyItemId,
+        pickupAmount: 1,
+        x: this._dungeonRewardPending.x,
+        z: this._dungeonRewardPending.z,
+        mesh,
+        hitRadius,
+        range: 2.8,
+        read: false,
+        spinSpeed: 0.03,
+      })
+    }
+    else {
+      this._dungeonInteractables.push({
+        id,
+        title: '任务宝箱',
+        description: '你听见机关松动的声音，宝箱出现了。',
+        x: this._dungeonRewardPending.x,
+        z: this._dungeonRewardPending.z,
+        mesh,
+        hitRadius,
+        range: 2.6,
+        read: false,
+        spinSpeed: 0.01,
+      })
+    }
 
     this._dungeonRewardSpawned = true
     this._emitDungeonProgress()
