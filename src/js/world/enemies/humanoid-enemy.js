@@ -60,7 +60,12 @@ export default class HumanoidEnemy {
 
   _setupModel(gltf, colors) {
     this._usesGltfModel = true
-    this.model = cloneSkinned(gltf.scene)
+    try {
+      this.model = cloneSkinned(gltf.scene)
+    }
+    catch {
+      this.model = gltf.scene.clone(true)
+    }
     this.group.add(this.model)
 
     this.mixer = new THREE.AnimationMixer(this.model)

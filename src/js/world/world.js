@@ -1275,40 +1275,42 @@ export default class World {
     this._dungeonEnemies = []
 
     // 生成敌人
-    enemies.forEach((pos) => {
-      // 根据地牢类型选择敌人类型 (TODO: Move logic to a helper or config)
-      let enemyType = 'skeleton'
-      if (portal.id === 'snow')
-        enemyType = 'yeti'
-      else if (portal.id === 'plains')
-        enemyType = 'goblin'
-      else if (portal.id === 'desert')
-        enemyType = 'skeleton_armor'
-      else if (portal.id === 'forest')
-        enemyType = 'zombie'
+    if (portal.id !== 'mine') {
+      enemies.forEach((pos) => {
+        // 根据地牢类型选择敌人类型 (TODO: Move logic to a helper or config)
+        let enemyType = 'skeleton'
+        if (portal.id === 'snow')
+          enemyType = 'yeti'
+        else if (portal.id === 'plains')
+          enemyType = 'goblin'
+        else if (portal.id === 'desert')
+          enemyType = 'skeleton_armor'
+        else if (portal.id === 'forest')
+          enemyType = 'zombie'
 
-      // 临时使用 HumanoidEnemy (稍后改造)
-      const isBoss = !!pos.isBoss
-      const enemy = new HumanoidEnemy({
-        position: new THREE.Vector3(pos.x, pos.y + 0.1, pos.z), // 稍微抬高
-        rotationY: Math.random() * Math.PI * 2,
-        scale: isBoss ? 1.15 : 1,
-        colors: { accent: portal.color },
-        type: enemyType, // 传递类型
-        hp: isBoss ? 12 : 4,
+        // 临时使用 HumanoidEnemy (稍后改造)
+        const isBoss = !!pos.isBoss
+        const enemy = new HumanoidEnemy({
+          position: new THREE.Vector3(pos.x, pos.y + 0.1, pos.z), // 稍微抬高
+          rotationY: Math.random() * Math.PI * 2,
+          scale: isBoss ? 1.15 : 1,
+          colors: { accent: portal.color },
+          type: enemyType, // 传递类型
+          hp: isBoss ? 12 : 4,
+        })
+        enemy.isBoss = isBoss
+        enemy.behavior = {
+          state: 'walk',
+          timer: 2 + Math.random() * 2,
+          home: { x: pos.x, z: pos.z },
+          radius: 4 + Math.random() * 2,
+          targetDir: enemy.group.rotation.y,
+        }
+        enemy.playLocomotion?.()
+        enemy.addTo(this._dungeonEnemiesGroup)
+        this._dungeonEnemies.push(enemy)
       })
-      enemy.isBoss = isBoss
-      enemy.behavior = {
-        state: 'walk',
-        timer: 2 + Math.random() * 2,
-        home: { x: pos.x, z: pos.z },
-        radius: 4 + Math.random() * 2,
-        targetDir: enemy.group.rotation.y,
-      }
-      enemy.playLocomotion?.()
-      enemy.addTo(this._dungeonEnemiesGroup)
-      this._dungeonEnemies.push(enemy)
-    })
+    }
 
     this._activePortalId = null
     this._activePortal = null

@@ -76,6 +76,78 @@ test('smoke: app loads without runtime errors', async ({ page }, testInfo) => {
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
 
+test('input: B/H toggles inventory and F grabs pet', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    return Boolean(world?.player && world?.animals?.length)
+  }, { timeout: 90_000 })
+
+  await page.keyboard.press('b')
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === 'backpack', { timeout: 10_000 })
+
+  await page.keyboard.press('h')
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === 'warehouse', { timeout: 10_000 })
+
+  await page.keyboard.press('b')
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === 'backpack', { timeout: 10_000 })
+
+  await page.keyboard.press('b')
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === null, { timeout: 10_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const animal = world.animals[0]
+    if (!animal?.group)
+      return
+
+    const a = animal.group.position
+    const x = a.x
+    const z = a.z - 2.2
+    const y = world._getSurfaceY(x, z)
+
+    world.player.teleportTo(x, y + 1.1, z)
+    world.player.setFacing(Math.atan2(a.x - x, a.z - z))
+  })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    if (world && !world.__pwOldFindGrabCandidateAnimal) {
+      world.__pwOldFindGrabCandidateAnimal = world._findGrabCandidateAnimal
+      world._findGrabCandidateAnimal = () => world.animals?.[0] ?? null
+    }
+  })
+
+  await page.keyboard.press('f')
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._carriedAnimal), { timeout: 10_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    if (world?.__pwOldFindGrabCandidateAnimal) {
+      world._findGrabCandidateAnimal = world.__pwOldFindGrabCandidateAnimal
+      delete world.__pwOldFindGrabCandidateAnimal
+    }
+  })
+
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
 test('combat: lock-on toggles and melee hit reduces hp', async ({ page }) => {
   test.setTimeout(120_000)
   const consoleErrors = []

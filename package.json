@@ -1,6 +1,7 @@
 {
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@10.24.0",
   "author": {
     "name": "Doinel Atanasiu",
     "email": "doinel1atanasiu@gmail.com",
@@ -15,7 +16,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "postinstall": "node -e \"if(!process.env.CI){require('child_process').execSync('husky',{stdio:'inherit',shell:true});require('child_process').execSync('playwright install',{stdio:'inherit',shell:true});}\"",
+    "postinstall": "node -e \"if(!process.env.CI&&!process.env.CF_PAGES){require('child_process').execSync('husky',{stdio:'inherit',shell:true});require('child_process').execSync('playwright install',{stdio:'inherit',shell:true});}\"",
     "clean:dist": "npx rimraf dist",
     "clean:report": "npx rimraf playwright-report",
     "test:chrome": "npx playwright test --headed --project=chromium",
