@@ -769,6 +769,137 @@ export default class World {
     }
   }
 
+  _createToolMesh(itemId) {
+    let mesh = null
+    const resource = this.resources?.items?.[itemId]
+    if (resource?.scene) {
+      mesh = resource.scene.clone()
+    }
+    else {
+      const geometry = new THREE.BoxGeometry(0.6, 0.6, 0.6)
+      const material = new THREE.MeshStandardMaterial({ color: 0xFFCC66, roughness: 0.6, metalness: 0.15, emissive: 0x332200, emissiveIntensity: 0.25 })
+      mesh = new THREE.Mesh(geometry, material)
+    }
+
+    mesh.traverse?.((child) => {
+      if (child?.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+
+    try {
+      const box = new THREE.Box3().setFromObject(mesh)
+      const size = new THREE.Vector3()
+      box.getSize(size)
+      const max = Math.max(size.x, size.y, size.z)
+      if (Number.isFinite(max) && max > 0.0001) {
+        const target = 0.9
+        const s = target / max
+        mesh.scale.multiplyScalar(s)
+      }
+    }
+    catch {
+    }
+
+    return mesh
+  }
+
+  _removeLockedChestLootVisual(chestId) {
+    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    const visual = chest?._lootVisual
+    if (!visual?.mesh)
+      return
+    visual.mesh.visible = false
+    visual.mesh.removeFromParent?.()
+    chest._lootVisual = null
+  }
+
+  _ensureLockedChestLootVisual(chestId, withPop = false) {
+    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    if (!chest)
+      return
+    const state = this._lockedChests?.[chestId] || {}
+    const itemId = state?.loot?.itemId || null
+    if (!state.unlocked || state.looted || !itemId) {
+      this._removeLockedChestLootVisual(chestId)
+      return
+    }
+
+    if (chest._lootVisual?.mesh) {
+      if (chest._lootVisual.itemId !== itemId) {
+        this._removeLockedChestLootVisual(chestId)
+      }
+      else {
+        return
+      }
+    }
+
+    const mesh = this._createToolMesh(itemId)
+    const base = chest.mesh?.position
+    const x = base?.x ?? chest.x
+    const z = base?.z ?? chest.z
+    const startY = (base?.y ?? (this._getSurfaceY(x, z) + 0.5)) + 0.6
+    mesh.position.set(x, startY, z)
+    mesh.rotation.y = Math.random() * Math.PI * 2
+    this._interactablesGroup?.add?.(mesh)
+
+    const now = this.experience.time.elapsed ?? 0
+    chest._lootVisual = {
+      mesh,
+      itemId,
+      startMs: now,
+      durationMs: withPop ? 820 : 0,
+      startY,
+      peakY: startY + 1.05,
+      settleY: startY + 0.55,
+      phase: Math.random() * Math.PI * 2,
+      done: !withPop,
+    }
+    if (!withPop) {
+      mesh.position.y = chest._lootVisual.settleY
+    }
+  }
+
+  _updateLockedChestLootVisual(chest, dt, t) {
+    const visual = chest?._lootVisual
+    if (!visual?.mesh)
+      return
+    const state = this._lockedChests?.[chest.id] || {}
+    const itemId = state?.loot?.itemId || null
+    if (!state.unlocked || state.looted || !itemId || itemId !== visual.itemId) {
+      this._removeLockedChestLootVisual(chest.id)
+      return
+    }
+
+    const mesh = visual.mesh
+    if (!visual.done && visual.durationMs > 0) {
+      const now = this.experience.time.elapsed ?? 0
+      const p = (now - visual.startMs) / visual.durationMs
+      const clamped = Math.min(1, Math.max(0, p))
+      if (clamped >= 1) {
+        visual.done = true
+        mesh.position.y = visual.settleY
+      }
+      else if (clamped < 0.55) {
+        const tt = clamped / 0.55
+        const e = 1 - (1 - tt) ** 3
+        mesh.position.y = visual.startY + (visual.peakY - visual.startY) * e
+      }
+      else {
+        const tt = (clamped - 0.55) / 0.45
+        const e = tt * tt * tt
+        mesh.position.y = visual.peakY + (visual.settleY - visual.peakY) * e
+      }
+      mesh.rotation.y += 2.2 * dt
+      mesh.rotation.x = Math.sin(clamped * Math.PI * 2) * 0.25 * (1 - clamped)
+      return
+    }
+
+    mesh.rotation.y += 1.15 * dt
+    mesh.position.y = visual.settleY + Math.sin(t * 2.2 + visual.phase) * 0.06
+  }
+
   _openLockedChest(chestId) {
     if (!chestId)
       return
@@ -834,6 +965,7 @@ export default class World {
     chest.unlocked = true
     chest.hint = '按 E 打开宝箱'
     chest.description = requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : chest.description
+    this._ensureLockedChestLootVisual(chestId, true)
 
     this._scheduleInventorySave()
     this._scheduleLockedChestsSave()
@@ -874,6 +1006,7 @@ export default class World {
     const remaining = Math.max(0, Math.floor(Number(state.loot.count) || 1) - takeCount)
     if (remaining <= 0) {
       this._lockedChests[chestId] = { unlocked: true, looted: true, loot: null }
+      this._removeLockedChestLootVisual(chestId)
       chest.read = true
       chest.looted = true
       chest.range = 0
@@ -920,7 +1053,7 @@ export default class World {
     return new CSS2DObject(div)
   }
 
-  _attachNameLabel(target, text, y = 1.25, maxDistance = 18) {
+  _attachNameLabel(target, text, y = 1.25, maxDistance = 18, scope = null) {
     if (!target)
       return null
     if (!target.userData)
@@ -939,10 +1072,48 @@ export default class World {
     target.add(label)
     target.userData._nameLabel = label
     target.userData._nameLabelMaxDistance = (Number.isFinite(maxDistance) && maxDistance > 0) ? maxDistance : 18
-    const entry = { target }
+    const entry = { target, scope: scope || null }
     target.userData._nameLabelEntry = entry
+    target.userData._nameLabelScope = entry.scope
     this._nameLabelEntries.push(entry)
     return label
+  }
+
+  _detachNameLabel(target, entry) {
+    if (!target?.userData)
+      return
+    const label = target.userData._nameLabel
+    const resolvedEntry = entry || target.userData._nameLabelEntry || null
+    if (label?.removeFromParent)
+      label.removeFromParent()
+    const el = label?.element
+    if (el?.remove)
+      el.remove()
+    delete target.userData._nameLabel
+    delete target.userData._nameLabelMaxDistance
+    delete target.userData._nameLabelEntry
+    delete target.userData._nameLabelScope
+    if (resolvedEntry && this._nameLabelEntries && this._nameLabelEntries.length > 0) {
+      const index = this._nameLabelEntries.indexOf(resolvedEntry)
+      if (index >= 0)
+        this._nameLabelEntries.splice(index, 1)
+    }
+  }
+
+  _clearNameLabelsByScope(scope) {
+    if (!scope || !this._nameLabelEntries || this._nameLabelEntries.length === 0)
+      return
+    for (let i = this._nameLabelEntries.length - 1; i >= 0; i--) {
+      const entry = this._nameLabelEntries[i]
+      const target = entry?.target
+      const s = entry?.scope || target?.userData?._nameLabelScope || null
+      if (s !== scope)
+        continue
+      if (target)
+        this._detachNameLabel(target, entry)
+      else
+        this._nameLabelEntries.splice(i, 1)
+    }
   }
 
   _updateNameLabelVisibility() {
@@ -958,7 +1129,10 @@ export default class World {
       const label = target?.userData?._nameLabel
       const el = label?.element
       if (!target || !label || !el || !target.parent) {
-        this._nameLabelEntries.splice(i, 1)
+        if (target)
+          this._detachNameLabel(target, entry)
+        else
+          this._nameLabelEntries.splice(i, 1)
         continue
       }
       const maxDistance = target.userData?._nameLabelMaxDistance ?? 18
@@ -1860,6 +2034,7 @@ export default class World {
       }
       this._dungeonEnemies = null
       this._dungeonEnemiesGroup = null
+      this._clearNameLabelsByScope('dungeon')
       this._dungeonGroup?.clear?.()
       emitter.emit('dungeon:progress_clear')
       emitter.emit('dungeon:toast_clear')
@@ -1936,7 +2111,7 @@ export default class World {
       })
       group.add(mesh)
       const itemId = cfg.big ? 'crystal_big' : 'crystal_small'
-      this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), cfg.big ? 1.25 : 0.95, 16)
+      this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), cfg.big ? 1.25 : 0.95, 16, 'dungeon')
       this._mineOres.push({
         mesh,
         itemId,
@@ -2126,6 +2301,13 @@ export default class World {
       },
     ]
 
+    const chestTitleByKey = {
+      key_plains: '平原宝箱',
+      key_snow: '雪原宝箱',
+      key_desert: '沙漠宝箱',
+      key_forest: '森林宝箱',
+    }
+
     const portalChestItems = (this.portals || [])
       .filter(p => p?.id && p.id !== 'mine')
       .map((portal) => {
@@ -2140,7 +2322,7 @@ export default class World {
         const looted = !!state.looted
         return {
           id: chestId,
-          title: `${portal.name}宝箱`,
+          title: chestTitleByKey?.[requiredKeyId] || `${portal.name}宝箱`,
           description: requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : '需要钥匙解锁',
           x,
           z,
@@ -2181,15 +2363,13 @@ export default class World {
 
       const y = this._getSurfaceY(item.x, item.z)
       mesh.position.set(item.x, y + 0.5, item.z)
-      if (item.id === 'warehouse') {
-        try {
-          const box = new THREE.Box3().setFromObject(mesh)
-          const dy = y - box.min.y
-          if (Number.isFinite(dy))
-            mesh.position.y += dy
-        }
-        catch {
-        }
+      try {
+        const box = new THREE.Box3().setFromObject(mesh)
+        const dy = y - box.min.y
+        if (Number.isFinite(dy))
+          mesh.position.y += dy
+      }
+      catch {
       }
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
 
@@ -2219,6 +2399,12 @@ export default class World {
         spinSpeed: (item.id === 'warehouse' || item.lockedChestId) ? 0 : 0.01,
       }
     })
+
+    for (const item of this.interactables) {
+      if (!item?.lockedChestId)
+        continue
+      this._ensureLockedChestLootVisual(item.id, false)
+    }
   }
 
   _initHubAutomation() {
@@ -2462,7 +2648,7 @@ export default class World {
 
       animal._resourceKey = cfg.type
       animal._typeLabel = cfg.label || cfg.type
-      this._attachNameLabel(animal.group, this._getModelFilenameByResourceKey(cfg.type), 2.15, 18)
+      this._attachNameLabel(animal.group, this._getModelFilenameByResourceKey(cfg.type), 2.15, 18, 'hub')
       animal.group.rotation.y = Math.random() * Math.PI * 2
       animal.addTo(this.animalsGroup)
 
@@ -2922,6 +3108,9 @@ export default class World {
     if (this.isPaused)
       return
 
+    const dt = this.experience.time.delta * 0.001
+    const t = (this.experience.time.elapsed ?? 0) * 0.001
+
     // Step2：先做 chunk streaming，确保玩家碰撞查询能尽量命中已加载 chunk
     if (this.chunkManager && this.player) {
       const pos = this.player.getPosition()
@@ -2953,6 +3142,13 @@ export default class World {
       this._updatePortals()
       this._updateAnimals()
       this._updateHubDrops()
+      if (this.interactables && this.interactables.length) {
+        for (const item of this.interactables) {
+          if (!item?.lockedChestId)
+            continue
+          this._updateLockedChestLootVisual(item, dt, t)
+        }
+      }
 
       if (!this.player)
         return
