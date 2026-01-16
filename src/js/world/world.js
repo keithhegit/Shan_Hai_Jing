@@ -113,6 +113,9 @@ export default class World {
     this._hubDropSeq = 1
     this._hubDropGeo = null
     this._hubDropMaterials = null
+    this._nameLabelEntries = []
+    this._nameLabelCamPos = new THREE.Vector3()
+    this._nameLabelTargetPos = new THREE.Vector3()
 
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
@@ -623,7 +626,8 @@ export default class World {
     if (!String(path).startsWith('models/'))
       return resourceKey || ''
     const parts = String(path).split('/')
-    return parts[parts.length - 1] || resourceKey || ''
+    const name = parts[parts.length - 1] || resourceKey || ''
+    return String(name).replace(/\.(?:gltf|glb)$/i, '')
   }
 
   _createNameLabel(text) {
@@ -643,7 +647,7 @@ export default class World {
     return new CSS2DObject(div)
   }
 
-  _attachNameLabel(target, text, y = 1.25) {
+  _attachNameLabel(target, text, y = 1.25, maxDistance = 18) {
     if (!target)
       return null
     if (!target.userData)
@@ -652,6 +656,8 @@ export default class World {
       const el = target.userData._nameLabel.element
       if (el)
         el.textContent = String(text || '')
+      if (Number.isFinite(maxDistance) && maxDistance > 0)
+        target.userData._nameLabelMaxDistance = maxDistance
       return target.userData._nameLabel
     }
 
@@ -659,7 +665,34 @@ export default class World {
     label.position.set(0, y, 0)
     target.add(label)
     target.userData._nameLabel = label
+    target.userData._nameLabelMaxDistance = (Number.isFinite(maxDistance) && maxDistance > 0) ? maxDistance : 18
+    const entry = { target }
+    target.userData._nameLabelEntry = entry
+    this._nameLabelEntries.push(entry)
     return label
+  }
+
+  _updateNameLabelVisibility() {
+    if (!this._nameLabelEntries || this._nameLabelEntries.length === 0)
+      return
+    const camera = this.experience.camera?.instance
+    if (!camera)
+      return
+    camera.getWorldPosition(this._nameLabelCamPos)
+    for (let i = this._nameLabelEntries.length - 1; i >= 0; i--) {
+      const entry = this._nameLabelEntries[i]
+      const target = entry?.target
+      const label = target?.userData?._nameLabel
+      const el = label?.element
+      if (!target || !label || !el || !target.parent) {
+        this._nameLabelEntries.splice(i, 1)
+        continue
+      }
+      const maxDistance = target.userData?._nameLabelMaxDistance ?? 18
+      target.getWorldPosition(this._nameLabelTargetPos)
+      const d = this._nameLabelCamPos.distanceTo(this._nameLabelTargetPos)
+      el.style.display = d > maxDistance ? 'none' : ''
+    }
   }
 
   _canAddToBackpack(itemId, amount = 1) {
@@ -815,8 +848,8 @@ export default class World {
     const camera = this.experience.camera?.instance
     if (!camera)
       return null
-    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 1.35
-    const minDot = Number.isFinite(options.minDot) ? options.minDot : 0.86
+    const maxDist = Number.isFinite(options.maxDist) ? options.maxDist : 1.7
+    const minDot = Number.isFinite(options.minDot) ? options.minDot : 0.72
 
     const playerPos = this.player.getPosition?.()
     if (!playerPos)
@@ -1630,7 +1663,7 @@ export default class World {
       })
       group.add(mesh)
       const itemId = cfg.big ? 'crystal_big' : 'crystal_small'
-      this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), cfg.big ? 1.25 : 0.95)
+      this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), cfg.big ? 1.25 : 0.95, 16)
       this._mineOres.push({
         mesh,
         itemId,
@@ -1816,41 +1849,56 @@ export default class World {
 
     this.interactables = items.map((item) => {
       let mesh
-      const resource = this.resources.items.chest_closed
-      if (resource) {
-        mesh = resource.scene.clone()
+      if (item.id === 'story-2' && this.resources.items.chest_open) {
+        mesh = this.resources.items.chest_open.scene.clone()
+        mesh.scale.set(2, 2, 2)
+      }
+      else if (this.resources.items.chest_closed) {
+        mesh = this.resources.items.chest_closed.scene.clone()
         mesh.scale.set(0.5, 0.5, 0.5)
       }
       else {
-        const geometry = new THREE.BoxGeometry(1, 1, 1)
-        const material = new THREE.MeshStandardMaterial({
-          color: 0x9B_6B_FF,
-          emissive: new THREE.Color(0x9B_6B_FF),
-          emissiveIntensity: 0.6,
-          roughness: 0.35,
-          metalness: 0.1,
-        })
-        mesh = new THREE.Mesh(geometry, material)
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(1, 1, 1),
+          new THREE.MeshStandardMaterial({
+            color: 0x9B_6B_FF,
+            emissive: new THREE.Color(0x9B_6B_FF),
+            emissiveIntensity: 0.6,
+            roughness: 0.35,
+            metalness: 0.1,
+          }),
+        )
       }
-
-      const outlineGeometry = new THREE.BoxGeometry(1.08, 1.08, 1.08)
-      const outlineMaterial = new THREE.MeshBasicMaterial({
-        color: 0xFF_FF_FF,
-        transparent: true,
-        opacity: 0.9,
-        wireframe: true,
-        depthWrite: false,
-      })
-      const outline = new THREE.Mesh(outlineGeometry, outlineMaterial)
-      outline.visible = false
 
       const y = this._getSurfaceY(item.x, item.z)
       mesh.position.set(item.x, y + 0.5, item.z)
+      if (item.id === 'story-2') {
+        try {
+          const box = new THREE.Box3().setFromObject(mesh)
+          const dy = y - box.min.y
+          if (Number.isFinite(dy))
+            mesh.position.y += dy
+        }
+        catch {
+        }
+      }
+      const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
+
+      const outlineSize = Math.max(1.08, hitRadius * 2 * 1.08)
+      const outline = new THREE.Mesh(
+        new THREE.BoxGeometry(outlineSize, outlineSize, outlineSize),
+        new THREE.MeshBasicMaterial({
+          color: 0xFF_FF_FF,
+          transparent: true,
+          opacity: 0.9,
+          wireframe: true,
+          depthWrite: false,
+        }),
+      )
+      outline.visible = false
       outline.position.copy(mesh.position)
 
       this._interactablesGroup.add(mesh, outline)
-
-      const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
 
       return {
         ...item,
@@ -1859,6 +1907,7 @@ export default class World {
         hitRadius,
         range: 2.6,
         read: false,
+        spinSpeed: item.id === 'story-2' ? 0 : 0.01,
       }
     })
   }
@@ -1941,7 +1990,7 @@ export default class World {
     mesh.position.set(x, y, z)
     mesh.castShadow = true
     mesh.receiveShadow = true
-    this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), 0.45)
+    this._attachNameLabel(mesh, this._getModelFilenameByResourceKey(itemId), 0.45, 12)
     this._hubDropsGroup.add(mesh)
     this._hubDrops.push({
       id,
@@ -2053,7 +2102,9 @@ export default class World {
       if (item.outline)
         item.outline.visible = item.id === this._activeInteractableId
       if (item.mesh) {
-        item.mesh.rotation.y += 0.01
+        const speed = Number.isFinite(item.spinSpeed) ? item.spinSpeed : 0.01
+        if (speed)
+          item.mesh.rotation.y += speed
       }
       if (item.outline) {
         item.outline.rotation.y = item.mesh.rotation.y
@@ -2098,7 +2149,7 @@ export default class World {
 
       animal._resourceKey = cfg.type
       animal._typeLabel = cfg.label || cfg.type
-      this._attachNameLabel(animal.group, this._getModelFilenameByResourceKey(cfg.type), 2.15)
+      this._attachNameLabel(animal.group, this._getModelFilenameByResourceKey(cfg.type), 2.15, 18)
       animal.group.rotation.y = Math.random() * Math.PI * 2
       animal.addTo(this.animalsGroup)
 
@@ -2618,6 +2669,8 @@ export default class World {
       this._resolvePlayerEnemyCollisions()
       this._resolvePlayerDungeonObjectCollisions()
     }
+
+    this._updateNameLabelVisibility()
   }
 
   _getHitRadiusFromObject(object3d, fallback = 0.9) {
