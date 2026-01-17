@@ -210,3 +210,86 @@ test('combat: lock-on toggles and melee hit reduces hp', async ({ page }) => {
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
+
+test('material gun: equip from inventory and laser deals dot', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    return Boolean(world?.player && world?.animals?.length)
+  }, { timeout: 90_000 })
+
+  await page.keyboard.press('b')
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === 'backpack', { timeout: 10_000 })
+
+  const closeButton = page.getByRole('button', { name: /关闭 \(ESC\/B\/H\)/ })
+  await expect(closeButton).toBeVisible({ timeout: 10_000 })
+
+  const inventoryModal = closeButton.locator('..').locator('..')
+  await expect(inventoryModal.getByText('物质枪', { exact: true })).toBeVisible({ timeout: 10_000 })
+
+  const gunRow = inventoryModal
+    .getByText('物质枪', { exact: true })
+    .locator('xpath=ancestor::*[contains(@class,"flex")][1]')
+  await gunRow.getByRole('button', { name: '装备/收起' }).click()
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._isMaterialGunEquipped), { timeout: 10_000 })
+
+  await page.keyboard.press('b')
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === null, { timeout: 10_000 })
+
+  const { hpBefore } = await page.evaluate(() => {
+    const world = window.Experience.world
+    const animal = world.animals[0]
+
+    const a = animal.group.position
+    const x = a.x
+    const z = a.z - 3.0
+    const y = world._getSurfaceY(x, z)
+    world.player.teleportTo(x, y + 1.1, z)
+    world.player.setFacing(Math.atan2(a.x - x, a.z - z))
+
+    world._lockedEnemy?.setLocked?.(false)
+    world._lockedEnemy = animal
+    world._lockedEnemy?.setLocked?.(true)
+    const targetPos = world._getEnemyLockTargetPos?.(animal)
+    if (targetPos)
+      world.cameraRig?.setLookAtOverride?.(targetPos)
+    world._startMaterialGunFire()
+
+    return { hpBefore: animal.hp }
+  })
+
+  await page.waitForFunction((hp) => {
+    const world = window.Experience?.world
+    const animal = world?.animals?.[0]
+    return Boolean(world?._materialGunBeam?.visible && Number(animal?.hp) < Number(hp))
+  }, hpBefore, { timeout: 12_000 })
+
+  const { hpAfter, forcedAggro } = await page.evaluate(() => {
+    const world = window.Experience.world
+    const animal = world.animals[0]
+    const now = world.experience?.time?.elapsed ?? 0
+    const forcedAggro = (animal?.behavior?.forceAggroUntil ?? 0) > now
+    world._stopMaterialGunFire()
+    return { hpAfter: animal.hp, forcedAggro }
+  })
+
+  expect(hpAfter).toBeLessThan(hpBefore)
+  expect(forcedAggro).toBe(true)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
