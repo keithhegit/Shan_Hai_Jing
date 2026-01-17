@@ -1,7 +1,7 @@
 # 3rd_MC — Master Plan（GDD / PRD / 技术方案 / 迭代计划汇总）
 
-更新时间：2026-01-14  
-基线版本：`main@f6fc8cd`（已合并并推送 main）  
+更新时间：2026-01-17  
+基线版本：`main@6759649`（已合并并推送 main）  
 迭代分支：`new_battle`（战斗迭代分支；已合并过一次，后续可继续复用或按需新开）
 
 本文件目标：把以下文档的信息去重合并为一份可执行的总表，并给出“已完成进度 + 下一迭代入口”。
@@ -11,7 +11,7 @@
 - `docs/terrain_data_system_cedd794c.plan.md`（地形数据系统专项方案）
 - `docs/PRD.md`（产品需求/体验规格）
 - `docs/project_plan.md`（项目总规划与里程碑）
-- `docs/Project_SHJ_development_plan.md`（高概念策划案：长线玩法系统参考）
+- `docs/Project_SHJ_development_plan_v2.md`（高概念策划案：长线玩法系统参考）
 
 ---
 
@@ -23,7 +23,7 @@
 - 迭代里程碑：`docs/project_plan.md`
 - 技术行动纲领：`docs/might&magic_development_plan.md`
 - 地形数据系统专项：`docs/terrain_data_system_cedd794c.plan.md`
-- 高概念策划案（长线参考）：`docs/Project_SHJ_development_plan.md`
+- 高概念策划案（长线参考）：`docs/Project_SHJ_development_plan_v2.md`
 
 ### 0.2 启动入口（Vue → Experience）
 - Vue 根组件：`src/App.vue`（创建 canvas，`new Experience(canvas)`，订阅 UI 事件）
@@ -84,20 +84,24 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 ### 2.1 已完成（可演示闭环）
 - Hub 可进入、可移动、相机与 PointerLock 链路可用
 - Hub 边界约束生效（软/硬边界逻辑已存在）
-- 传送门交互：靠近提示（prompt）+ 按键触发 + Loading 过渡 + 进入地牢
+- 传送门交互：单入口靠近提示（prompt）+ 目的地选择菜单 + Loading 过渡 + 进入地牢
 - Dungeon 可进入：线性地牢生成、出口返回 Hub、返回时 Loading 过渡
 - 互动点（Interactables）：靠近提示、按键打开、关闭后标记“已阅读”、进度上报 HUD
+- 上锁宝箱：地牢内生成上锁宝箱；解锁后战利品弹出动画可见；可在场景内按 E 拾取
 - HUD（Vue）：血量/体力/操作提示/小地图/提示与 Toast（以现状为准）
 - 小地图（MiniMap）：Canvas2D 绘制 + 玩家位置标记（依赖 `Experience.terrainDataManager`）
 - 端到端测试：Playwright smoke 覆盖“加载→进地牢→出地牢”，并校验渲染 canvas 绑定
 - 敌人/动物模型渲染：支持同一 GLTF 多实例创建（修复“创建了但不可见”的常见骨骼克隆问题）
 - 地牢敌人动画：进入地牢后默认播放走动类动画（Walk/Run/Move 兜底）
 
-### 2.1.1 本轮新增（相对 `main@945f2d7`）
+### 2.1.1 近期新增（相对 2026-01-14 文档版本）
 - 修复：SkinnedMesh/骨骼模型多实例克隆（敌人/动物）导致不可见
 - 增强：Playwright smoke 额外校验 Hub 动物与地牢敌人存在
 - 降噪：Vite SCSS 配置切到 modern API，避免 Sass legacy-js-api 警告刷屏
 - 文档：新增 `src/js/world/model_list.md`，汇总 World 资源加载 key 与使用点
+- Hub：交互物模型替换（仓库/纸条/水晶）与位置调整
+- Hub：传送门改为单入口 + 菜单选择目的地
+- 地牢：奖励宝箱迁移进各地牢，上锁宝箱解锁后支持战利品弹出与场景拾取
 
 ### 2.2 部分完成（存在入口/占位，但不完整）
 - 战斗锁定（Lock-on）：支持“中键锁定最近敌人 / 再按解除”，并推送 UI 提示事件；但“战斗判定/伤害/受击/死亡/重生”仍未形成闭环
@@ -296,8 +300,8 @@ I3.4 与战斗/通关系统的接口预留（建议在 I4 前补齐）
 
 ## 6. 回归与发布（每次迭代必跑）
 
-- `npm run lint`
-- `npm run build`
-- `npx playwright test`
+- `pnpm run lint`
+- `pnpm run build`
+- `npx playwright test tests/browsers.test.js --project=chromium`
 - 例外：纯文档变更可跳过 `playwright`
 
