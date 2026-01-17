@@ -64,7 +64,13 @@ export default class Player {
     this.setModel()
 
     // Animation Controller needs model
-    this.animation = new PlayerAnimationController(this.model, this.resource.animations)
+    const { animations, waveClipName } = this._normalizePlayerAnimations(this.resource.animations)
+    this._waveClipName = waveClipName
+    this.animation = new PlayerAnimationController(this.model, animations)
+
+    this._matterGun = null
+    this._matterGunMuzzle = null
+    this._isMatterGunAiming = false
 
     this.setupInputListeners()
     emitter.emit('ui:update_stats', { hp: this.hp, maxHp: this.maxHp, stamina: this.stamina })
@@ -115,18 +121,235 @@ export default class Player {
       }
     })
 
-    this.model.children[0].children[0].traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.renderOrder = 1
-      }
-    })
-    this.model.children[0].children[1].traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.renderOrder = 2
-      }
-    })
+    const layer0 = this.model?.children?.[0]?.children?.[0] || null
+    if (layer0) {
+      layer0.traverse((child) => {
+        if (child instanceof THREE.Mesh)
+          child.renderOrder = 1
+      })
+    }
+    const layer1 = this.model?.children?.[0]?.children?.[1] || null
+    if (layer1) {
+      layer1.traverse((child) => {
+        if (child instanceof THREE.Mesh)
+          child.renderOrder = 2
+      })
+    }
     // Add model to movement controller's group
     this.movement.group.add(this.model)
+  }
+
+  _normalizePlayerAnimations(rawClips) {
+    const clips = Array.isArray(rawClips) ? rawClips.filter(Boolean) : []
+    const lowered = clips.map((clip) => {
+      const name = String(clip?.name || '')
+      return { clip, name, lower: name.toLowerCase() }
+    })
+
+    const hasClip = name => lowered.some(row => row.name === name)
+
+    const findClip = (pred) => {
+      for (const row of lowered) {
+        if (pred(row.lower, row.name))
+          return row.clip
+      }
+      return null
+    }
+
+    const findClipByWords = (words = [], antiWords = []) => {
+      const w = (words || []).map(s => String(s).toLowerCase()).filter(Boolean)
+      const a = (antiWords || []).map(s => String(s).toLowerCase()).filter(Boolean)
+      return findClip((lower) => {
+        for (const x of w) {
+          if (!lower.includes(x))
+            return false
+        }
+        for (const x of a) {
+          if (lower.includes(x))
+            return false
+        }
+        return true
+      })
+    }
+
+    const cloneAs = (source, targetName) => {
+      if (!source || !targetName)
+        return null
+      const cloned = source.clone()
+      cloned.name = targetName
+      return cloned
+    }
+
+    const pickLocomotion = (modeWords, dir) => {
+      const dirWords = dir === 'forward'
+        ? ['forward', 'fwd', 'front']
+        : dir === 'backward'
+          ? ['back', 'backward']
+          : dir === 'left'
+            ? ['left']
+            : ['right']
+
+      const clip = findClipByWords([...modeWords, ...dirWords])
+        || findClipByWords(modeWords)
+      return clip
+    }
+
+    const mapping = []
+
+    mapping.push([AnimationClips.IDLE, () => findClipByWords(['idle']) || findClipByWords(['stand'], ['up'])])
+
+    mapping.push([AnimationClips.WALK_FORWARD, () => pickLocomotion(['walk'], 'forward')])
+    mapping.push([AnimationClips.WALK_BACK, () => pickLocomotion(['walk'], 'backward')])
+    mapping.push([AnimationClips.WALK_LEFT, () => pickLocomotion(['walk'], 'left')])
+    mapping.push([AnimationClips.WALK_RIGHT, () => pickLocomotion(['walk'], 'right')])
+
+    mapping.push([AnimationClips.RUN_FORWARD, () => pickLocomotion(['run'], 'forward')])
+    mapping.push([AnimationClips.RUN_BACK, () => pickLocomotion(['run'], 'backward')])
+    mapping.push([AnimationClips.RUN_LEFT, () => pickLocomotion(['run'], 'left')])
+    mapping.push([AnimationClips.RUN_RIGHT, () => pickLocomotion(['run'], 'right')])
+
+    mapping.push([AnimationClips.SNEAK_FORWARD, () => pickLocomotion(['crouch'], 'forward') || pickLocomotion(['sneak'], 'forward')])
+    mapping.push([AnimationClips.SNEAK_BACK, () => pickLocomotion(['crouch'], 'backward') || pickLocomotion(['sneak'], 'backward')])
+    mapping.push([AnimationClips.SNEAK_LEFT, () => pickLocomotion(['crouch'], 'left') || pickLocomotion(['sneak'], 'left')])
+    mapping.push([AnimationClips.SNEAK_RIGHT, () => pickLocomotion(['crouch'], 'right') || pickLocomotion(['sneak'], 'right')])
+
+    mapping.push([AnimationClips.JUMP, () => findClipByWords(['jump'])])
+    mapping.push([AnimationClips.FALL, () => findClipByWords(['fall']) || findClipByWords(['air'])])
+
+    mapping.push([AnimationClips.STANDUP, () => findClipByWords(['stand', 'up']) || findClipByWords(['get', 'up']) || findClipByWords(['standup'])])
+
+    mapping.push([AnimationClips.BLOCK, () => findClipByWords(['block']) || findClipByWords(['guard'])])
+    mapping.push([AnimationClips.RIGHT_BLOCK, () => findClipByWords(['block', 'right']) || findClipByWords(['guard', 'right'])])
+
+    const pickAttack = () => {
+      return findClipByWords(['punch'])
+        || findClipByWords(['attack'])
+        || findClipByWords(['hit'])
+    }
+
+    mapping.push([AnimationClips.STRAIGHT_PUNCH, () => findClipByWords(['punch', 'straight']) || pickAttack()])
+    mapping.push([AnimationClips.HOOK_PUNCH, () => findClipByWords(['punch', 'hook']) || pickAttack()])
+    mapping.push([AnimationClips.RIGHT_STRAIGHT_PUNCH, () => findClipByWords(['punch', 'straight', 'right']) || findClipByWords(['attack', 'right']) || pickAttack()])
+    mapping.push([AnimationClips.RIGHT_HOOK_PUNCH, () => findClipByWords(['punch', 'hook', 'right']) || findClipByWords(['attack', 'right']) || pickAttack()])
+    mapping.push([AnimationClips.QUICK_COMBO, () => findClipByWords(['combo']) || findClipByWords(['punch', 'combo']) || pickAttack()])
+
+    mapping.push([AnimationClips.TPOSE, () => findClipByWords(['tpose']) || findClipByWords(['t-pose'])])
+
+    const wave = findClipByWords(['wave'])
+    const waveClipName = wave?.name || null
+
+    const out = [...clips]
+
+    for (const [targetName, resolver] of mapping) {
+      if (hasClip(targetName))
+        continue
+      const src = resolver?.()
+      if (!src)
+        continue
+      const renamed = cloneAs(src, targetName)
+      if (renamed)
+        out.push(renamed)
+    }
+
+    if (!hasClip(AnimationClips.RIGHT_BLOCK) && hasClip(AnimationClips.BLOCK)) {
+      const src = out.find(c => c?.name === AnimationClips.BLOCK) || null
+      const renamed = cloneAs(src, AnimationClips.RIGHT_BLOCK)
+      if (renamed)
+        out.push(renamed)
+    }
+
+    return { animations: out, waveClipName }
+  }
+
+  setMatterGunEquipped(isEquipped) {
+    const next = !!isEquipped
+    if (next === !!this._matterGun)
+      return
+    if (next)
+      this._equipMatterGun()
+    else
+      this._unequipMatterGun()
+  }
+
+  setMatterGunAiming(isAiming) {
+    const next = !!isAiming
+    if (next === this._isMatterGunAiming)
+      return
+    this._isMatterGunAiming = next
+
+    if (this._isMatterGunAiming && this._waveClipName)
+      this.animation.setStaticPose(this._waveClipName)
+    else
+      this.animation.clearStaticPose()
+  }
+
+  getMatterGunMuzzleWorldPosition() {
+    if (!this._matterGunMuzzle)
+      return null
+    const pos = new THREE.Vector3()
+    this._matterGunMuzzle.getWorldPosition(pos)
+    return pos
+  }
+
+  _findHandBone() {
+    let best = null
+    const candidates = []
+    this.model?.traverse?.((obj) => {
+      if (!obj?.isBone || !obj?.name)
+        return
+      const n = String(obj.name).toLowerCase()
+      const score = n.includes('righthand') || n.includes('right_hand') || n.includes('hand_r') || n.includes('r_hand')
+        ? 10
+        : n.includes('hand')
+          ? 2
+          : 0
+      if (score > 0)
+        candidates.push({ obj, score })
+    })
+    candidates.sort((a, b) => b.score - a.score)
+    best = candidates[0]?.obj || null
+    return best
+  }
+
+  _equipMatterGun() {
+    if (this._matterGun)
+      return
+
+    const gltf = this.resources.items.material_gun
+    const scene = gltf?.scene
+    if (!scene)
+      return
+
+    const gun = scene.clone(true)
+    gun.scale.setScalar(0.08)
+    gun.rotation.set(0, 0, 0)
+    gun.position.set(0, 0, 0)
+
+    const hold = new THREE.Group()
+    hold.add(gun)
+    hold.rotation.set(0.2, Math.PI / 2, 0)
+    hold.position.set(0.08, 0.02, 0.12)
+
+    const hand = this._findHandBone() || this.model
+    hand.add(hold)
+
+    const muzzle = new THREE.Object3D()
+    muzzle.position.set(0.2, 0.02, 0)
+    hold.add(muzzle)
+
+    this._matterGun = hold
+    this._matterGunMuzzle = muzzle
+  }
+
+  _unequipMatterGun() {
+    if (!this._matterGun)
+      return
+
+    this.setMatterGunAiming(false)
+    this._matterGun.visible = false
+    this._matterGun.removeFromParent?.()
+    this._matterGun = null
+    this._matterGunMuzzle = null
   }
 
   setOpacity(value) {
@@ -561,6 +784,7 @@ export default class Player {
       emitter.off('shadow:quality-changed', this._handleShadowQuality)
     if (this._onRespawn)
       emitter.off('game:respawn', this._onRespawn)
+    this._unequipMatterGun()
     this.movement?.group?.removeFromParent?.()
   }
 }

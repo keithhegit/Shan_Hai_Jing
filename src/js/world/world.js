@@ -66,6 +66,7 @@ export default class World {
         fence: 4,
         crystal_big: 6,
         crystal_small: 3,
+        material_gun: 2,
         Axe_Wood: 4,
         Axe_Stone: 5,
         Axe_Gold: 4,
@@ -119,6 +120,14 @@ export default class World {
     this._nameLabelEntries = []
     this._nameLabelCamPos = new THREE.Vector3()
     this._nameLabelTargetPos = new THREE.Vector3()
+    this._isMaterialGunEquipped = false
+    this._isMaterialGunFiring = false
+    this._materialGunLastDamageAt = 0
+    this._materialGunBeam = null
+    this._materialGunBeamPositions = new Float32Array(6)
+    this._npcStats = this._createNpcStatsTable()
+
+    this._initMaterialGunBeam()
 
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
@@ -182,10 +191,19 @@ export default class World {
           return
         }
         if (event.button === 0) {
-          this._fireMatterGun()
+          if (this._isMaterialGunEquipped)
+            this._startMaterialGunFire()
+          else
+            this._fireMatterGun()
         }
       }
       emitter.on('input:mouse_down', this._onMouseDown)
+
+      this._onMouseUp = (event) => {
+        if (event.button === 0)
+          this._stopMaterialGunFire()
+      }
+      emitter.on('input:mouse_up', this._onMouseUp)
 
       this._onPunchStraight = () => {
         this._tryPlayerAttack({ damage: 1, range: 2.6, minDot: 0.35, cooldownMs: 220 })
@@ -396,6 +414,9 @@ export default class World {
       this._onInventoryTransfer = (payload) => {
         this._transferInventory(payload)
       }
+      this._onInventoryEquip = (payload) => {
+        this._equipInventoryItem(payload)
+      }
       this._onGrabPet = () => {
         this._toggleCarryAnimal()
       }
@@ -404,6 +425,7 @@ export default class World {
       emitter.on('input:toggle_warehouse', this._onToggleWarehouse)
       emitter.on('inventory:close', this._onInventoryClose)
       emitter.on('inventory:transfer', this._onInventoryTransfer)
+      emitter.on('inventory:equip', this._onInventoryEquip)
       emitter.on('input:grab_pet', this._onGrabPet)
 
       this._onChestClose = (payload) => {
@@ -428,8 +450,156 @@ export default class World {
       emitter.on('chest:use_key', this._onChestUseKey)
       emitter.on('chest:take', this._onChestTakeItem)
 
+      this._ensureStarterMatterGun()
       this._emitInventorySummary()
     })
+  }
+
+  _createNpcStatsTable() {
+    return {
+      animal_chicken: { hp: 2, damage: 1, speed: 1.9, aggroRadius: 8, attackRange: 2.0, windupMs: 300 },
+      animal_pig: { hp: 4, damage: 1, speed: 1.7, aggroRadius: 8, attackRange: 2.0, windupMs: 300 },
+      animal_sheep: { hp: 4, damage: 1, speed: 1.65, aggroRadius: 8, attackRange: 2.0, windupMs: 300 },
+      animal_cat: { hp: 3, damage: 1, speed: 2.2, aggroRadius: 8, attackRange: 2.0, windupMs: 280 },
+      animal_dog: { hp: 5, damage: 2, speed: 2.15, aggroRadius: 9, attackRange: 2.1, windupMs: 260 },
+      animal_horse: { hp: 6, damage: 2, speed: 2.35, aggroRadius: 9, attackRange: 2.15, windupMs: 260 },
+      animal_wolf: { hp: 8, damage: 3, speed: 2.45, aggroRadius: 10, attackRange: 2.25, windupMs: 240 },
+      enemy_default: { hp: 4, damage: 1, speed: 1.35, aggroRadius: 9, attackRange: 2.1, windupMs: 260 },
+      material_gun: { tickMs: 900, tickDamage: 1, maxRange: 24 },
+    }
+  }
+
+  _initMaterialGunBeam() {
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(this._materialGunBeamPositions, 3))
+    const mat = new THREE.LineBasicMaterial({
+      color: 0xFF_3B_3B,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+    })
+    const line = new THREE.Line(geo, mat)
+    line.frustumCulled = false
+    line.visible = false
+    this._materialGunBeam = line
+    this.scene.add(line)
+  }
+
+  _ensureStarterMatterGun() {
+    try {
+      if (typeof window === 'undefined')
+        return
+      const key = 'mmmc:starter_matter_gun_v1'
+      const has = window.localStorage?.getItem?.(key)
+      if (has)
+        return
+      const items = this._getBagItems('backpack')
+      if (!items.material_gun || items.material_gun <= 0)
+        this._addInventoryItem('backpack', 'material_gun', 1)
+      window.localStorage?.setItem?.(key, '1')
+    }
+    catch {
+    }
+  }
+
+  _equipInventoryItem(payload) {
+    const itemId = payload?.itemId
+    if (itemId !== 'material_gun')
+      return
+    const items = this._getBagItems('backpack')
+    const count = Math.max(0, Math.floor(Number(items?.[itemId]) || 0))
+    if (count <= 0) {
+      emitter.emit('dungeon:toast', { text: '背包里没有物质枪' })
+      return
+    }
+
+    const next = !this._isMaterialGunEquipped
+    this._isMaterialGunEquipped = next
+    this.player?.setMatterGunEquipped?.(next)
+    if (!next)
+      this._stopMaterialGunFire()
+    emitter.emit('dungeon:toast', { text: next ? '已装备物质枪' : '已收起物质枪' })
+  }
+
+  _startMaterialGunFire() {
+    if (!this._isMaterialGunEquipped)
+      return
+    this._isMaterialGunFiring = true
+  }
+
+  _stopMaterialGunFire() {
+    if (!this._isMaterialGunFiring && !this._materialGunBeam?.visible)
+      return
+    this._isMaterialGunFiring = false
+    this.player?.setMatterGunAiming?.(false)
+    if (this._materialGunBeam)
+      this._materialGunBeam.visible = false
+  }
+
+  _updateMaterialGun() {
+    if (!this.player || !this._isMaterialGunEquipped || !this._materialGunBeam) {
+      this._stopMaterialGunFire()
+      return
+    }
+
+    const target = this._lockedEnemy
+    const validTarget = !!target?.group && !target?.isDead
+    if (!this._isMaterialGunFiring || !validTarget) {
+      this.player.setMatterGunAiming(false)
+      this._materialGunBeam.visible = false
+      return
+    }
+
+    const cfg = this._npcStats?.material_gun || {}
+    const maxRange = Number.isFinite(cfg.maxRange) ? cfg.maxRange : 24
+    const tickMs = Math.max(120, Math.floor(Number(cfg.tickMs) || 900))
+    const tickDamage = Math.max(1, Math.floor(Number(cfg.tickDamage) || 1))
+
+    const muzzle = this.player.getMatterGunMuzzleWorldPosition?.()
+    const start = muzzle || new THREE.Vector3(this.player.getPosition().x, this.player.getPosition().y + 1.35, this.player.getPosition().z)
+    const end = this._getEnemyLockTargetPos(target) || new THREE.Vector3(target.group.position.x, target.group.position.y + 1.35, target.group.position.z)
+
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const dz = end.z - start.z
+    const d2 = dx * dx + dy * dy + dz * dz
+    if (d2 > maxRange * maxRange) {
+      this._materialGunBeam.visible = false
+      this.player.setMatterGunAiming(false)
+      return
+    }
+
+    this._materialGunBeamPositions[0] = start.x
+    this._materialGunBeamPositions[1] = start.y
+    this._materialGunBeamPositions[2] = start.z
+    this._materialGunBeamPositions[3] = end.x
+    this._materialGunBeamPositions[4] = end.y
+    this._materialGunBeamPositions[5] = end.z
+    this._materialGunBeam.geometry.attributes.position.needsUpdate = true
+    this._materialGunBeam.visible = true
+    this.player.setMatterGunAiming(true)
+
+    const now = this.experience.time?.elapsed ?? 0
+    if (now - this._materialGunLastDamageAt < tickMs)
+      return
+    this._materialGunLastDamageAt = now
+
+    const hit = target.takeDamage?.(tickDamage)
+    if (hit)
+      this._forceNpcAggro(target, now + 8000)
+
+    if (target.isDead && this._lockedEnemy === target) {
+      this._clearLockOn()
+      this._stopMaterialGunFire()
+    }
+  }
+
+  _forceNpcAggro(npc, untilMs) {
+    if (!npc)
+      return
+    if (!npc.behavior)
+      npc.behavior = {}
+    npc.behavior.forceAggroUntil = Math.max(Number(npc.behavior.forceAggroUntil) || 0, Math.floor(Number(untilMs) || 0))
   }
 
   _getEnemyLockTargetPos(enemy) {
@@ -439,6 +609,33 @@ export default class World {
     enemy.group.getWorldPosition(pos)
     pos.y += 1.4
     return pos
+  }
+
+  _getNearestHubAnimal(maxDistance = 18) {
+    if (!this.animals || !this.player)
+      return null
+    const pos = this.player.getPosition()
+    let best = null
+    let bestD2 = Infinity
+    const maxD2 = maxDistance * maxDistance
+    for (const animal of this.animals) {
+      if (!animal?.group || animal?.isDead)
+        continue
+      if (animal === this._carriedAnimal)
+        continue
+      const epos = new THREE.Vector3()
+      animal.group.getWorldPosition(epos)
+      const dx = epos.x - pos.x
+      const dz = epos.z - pos.z
+      const d2 = dx * dx + dz * dz
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = animal
+      }
+    }
+    if (!best || bestD2 > maxD2)
+      return null
+    return best
   }
 
   _getNearestDungeonEnemy(maxDistance = 18) {
@@ -469,7 +666,7 @@ export default class World {
   _toggleLockOn() {
     if (this.isPaused)
       return
-    if (this.currentWorld !== 'dungeon')
+    if (this.currentWorld !== 'dungeon' && this.currentWorld !== 'hub')
       return
     if (!this.player)
       return
@@ -484,7 +681,7 @@ export default class World {
       return
     }
 
-    const enemy = this._getNearestDungeonEnemy()
+    const enemy = this.currentWorld === 'hub' ? this._getNearestHubAnimal() : this._getNearestDungeonEnemy()
     if (!enemy)
       return
 
@@ -497,7 +694,7 @@ export default class World {
   }
 
   _updateLockOn() {
-    if (this.currentWorld !== 'dungeon' || !this.player) {
+    if ((this.currentWorld !== 'dungeon' && this.currentWorld !== 'hub') || !this.player) {
       if (this._lockedEnemy) {
         this._lockedEnemy.setLocked?.(false)
         this._lockedEnemy = null
@@ -528,6 +725,7 @@ export default class World {
       this._lockedEnemy = null
       this.cameraRig?.setLookAtOverride?.(null)
       emitter.emit('combat:lock_clear')
+      this._stopMaterialGunFire()
       return
     }
 
@@ -2639,12 +2837,18 @@ export default class World {
       const x = centerX + (cfg.dx ?? 0)
       const z = centerZ + (cfg.dz ?? 0)
       const y = this._getSurfaceY(x, z)
+      const stats = this._npcStats?.[cfg.type] || this._npcStats?.enemy_default || {}
+      const hp = Math.max(1, Math.floor(Number(stats.hp) || 3))
 
       const animal = new HumanoidEnemy({
         position: new THREE.Vector3(x, y, z),
         scale: 0.8,
         type: cfg.type,
+        hp,
       })
+      animal._attackDamage = Math.max(1, Math.floor(Number(stats.damage) || 1))
+      animal._attackRange = Number.isFinite(stats.attackRange) ? stats.attackRange : 2.1
+      animal._attackWindupMs = Math.max(120, Math.floor(Number(stats.windupMs) || 260))
 
       animal._resourceKey = cfg.type
       animal._typeLabel = cfg.label || cfg.type
@@ -2685,6 +2889,9 @@ export default class World {
       return
 
     const dt = this.experience.time.delta * 0.001
+    const now = this.experience.time?.elapsed ?? 0
+    const playerPos = this.player?.getPosition?.()
+    const playerDead = !!this.player?.isDead
 
     this.animals.forEach((animal) => {
       animal.update()
@@ -2793,6 +3000,59 @@ export default class World {
           }
         }
         return
+      }
+
+      if (playerPos && !playerDead && !animal.isDead && animal.group) {
+        const stats = this._npcStats?.[animal._resourceKey] || this._npcStats?.enemy_default || {}
+        const aggroR = Number.isFinite(stats.aggroRadius) ? stats.aggroRadius : 8
+        const attackR = Number.isFinite(stats.attackRange) ? stats.attackRange : 2.1
+        const forceAggro = (data.forceAggroUntil ?? 0) > now
+
+        const ex = animal.group.position.x
+        const ez = animal.group.position.z
+        const dxp = playerPos.x - ex
+        const dzp = playerPos.z - ez
+        const d2p = dxp * dxp + dzp * dzp
+        const aggro2 = aggroR * aggroR
+        const attack2 = attackR * attackR
+
+        if (forceAggro || d2p <= aggro2) {
+          const len = Math.hypot(dxp, dzp)
+          const nx = len > 0.0001 ? (dxp / len) : 0
+          const nz = len > 0.0001 ? (dzp / len) : 1
+
+          const facing = Math.atan2(dxp, dzp)
+          animal.group.rotation.y = facing
+
+          if (d2p > attack2) {
+            data.state = 'chase'
+            animal.playWalk?.() || animal.playAnimation?.('Walk')
+            const sp = Number.isFinite(stats.speed) ? stats.speed : 1.9
+            const step = sp * dt
+            animal.group.position.x += nx * step
+            animal.group.position.z += nz * step
+          }
+          else {
+            data.state = 'attack'
+            animal.tryAttack?.({
+              now,
+              damage: Math.max(1, Math.floor(Number(stats.damage) || 1)),
+              range: attackR,
+              windupMs: Math.max(120, Math.floor(Number(stats.windupMs) || 260)),
+            })
+          }
+
+          const hit = animal.consumeAttackHit?.({ now })
+          if (hit && this.player?.takeDamage) {
+            const source = new THREE.Vector3(animal.group.position.x, animal.group.position.y, animal.group.position.z)
+            this.player.takeDamage({ amount: hit.damage, canBeBlocked: true, sourcePosition: source })
+          }
+
+          const pos = animal.group.position
+          const groundY = this._getSurfaceY(pos.x, pos.z)
+          animal.group.position.y += (groundY - animal.group.position.y) * 0.18
+          return
+        }
       }
 
       if (data.state === 'mining') {
@@ -2974,8 +3234,9 @@ export default class World {
         const d2p = dxp * dxp + dzp * dzp
         const aggro2 = 9.0 * 9.0
         const attack2 = 2.2 * 2.2
+        const forceAggro = (data.forceAggroUntil ?? 0) > now
 
-        if (d2p <= aggro2) {
+        if (forceAggro || d2p <= aggro2) {
           const len = Math.hypot(dxp, dzp)
           const nx = len > 0.0001 ? (dxp / len) : 0
           const nz = len > 0.0001 ? (dzp / len) : 1
@@ -3179,6 +3440,9 @@ export default class World {
       this._resolvePlayerDungeonObjectCollisions()
     }
 
+    if (this.currentWorld === 'hub')
+      this._updateLockOn()
+    this._updateMaterialGun()
     this._updateNameLabelVisibility()
   }
 

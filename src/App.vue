@@ -157,6 +157,12 @@ function transferItem(from, to, itemId, amount = 1) {
   emitter.emit('inventory:transfer', { from, to, itemId, amount })
 }
 
+function equipItem(itemId) {
+  if (!itemId)
+    return
+  emitter.emit('inventory:equip', { itemId })
+}
+
 function bagEntries(bag) {
   return Object.entries(bag || {})
     .map(([id, count]) => ({ id, count }))
@@ -167,6 +173,8 @@ function bagEntries(bag) {
 function itemLabel(id) {
   if (id === 'fence')
     return 'Fence'
+  if (id === 'material_gun')
+    return '物质枪'
   if (id === 'key_plains')
     return '平原钥匙'
   if (id === 'key_snow')
@@ -522,12 +530,21 @@ onBeforeUnmount(() => {
                     x{{ row.count }}
                   </div>
                 </div>
-                <button
-                  class="shrink-0 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
-                  @click="transferItem('backpack', 'warehouse', row.id, 1)"
-                >
-                  存入
-                </button>
+                <div class="flex shrink-0 items-center gap-2">
+                  <button
+                    v-if="row.id === 'material_gun'"
+                    class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                    @click="equipItem(row.id)"
+                  >
+                    装备/收起
+                  </button>
+                  <button
+                    class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                    @click="transferItem('backpack', 'warehouse', row.id, 1)"
+                  >
+                    存入
+                  </button>
+                </div>
               </div>
             </div>
           </div>
