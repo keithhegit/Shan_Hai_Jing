@@ -182,10 +182,6 @@ export default class World {
 
       // ===== 交互事件绑定：删除/新增方块 =====
       this._onMouseDown = (event) => {
-        if (event.button === 1) {
-          this._toggleLockOn()
-          return
-        }
         if (event.button === 2) {
           this._throwCarriedAnimal()
           return
@@ -205,10 +201,19 @@ export default class World {
       }
       emitter.on('input:mouse_up', this._onMouseUp)
 
+      this._onLockOn = () => {
+        this._toggleLockOn()
+      }
+      emitter.on('input:lock_on', this._onLockOn)
+
       this._onPunchStraight = () => {
+        if (this.player?.isBlocking || !!this.player?.inputState?.c)
+          return
         this._tryPlayerAttack({ damage: 1, range: 2.6, minDot: 0.35, cooldownMs: 220 })
       }
       this._onPunchHook = () => {
+        if (this.player?.isBlocking || !!this.player?.inputState?.c)
+          return
         this._tryPlayerAttack({ damage: 2, range: 2.4, minDot: 0.2, cooldownMs: 320 })
       }
       emitter.on('input:punch_straight', this._onPunchStraight)
@@ -611,7 +616,7 @@ export default class World {
     return pos
   }
 
-  _getNearestHubAnimal(maxDistance = 18) {
+  _getNearestHubAnimal(maxDistance = 50) {
     if (!this.animals || !this.player)
       return null
     const pos = this.player.getPosition()
@@ -638,7 +643,7 @@ export default class World {
     return best
   }
 
-  _getNearestDungeonEnemy(maxDistance = 18) {
+  _getNearestDungeonEnemy(maxDistance = 50) {
     if (!this._dungeonEnemies || !this.player)
       return null
     const pos = this.player.getPosition()
@@ -676,7 +681,7 @@ export default class World {
     if (this._lockedEnemy) {
       this._lockedEnemy.setLocked?.(false)
       this._lockedEnemy = null
-      this.cameraRig?.setLookAtOverride?.(null)
+      emitter.emit('combat:toggle_lock', null)
       emitter.emit('combat:lock_clear')
       return
     }
@@ -687,9 +692,7 @@ export default class World {
 
     this._lockedEnemy = enemy
     this._lockedEnemy.setLocked?.(true)
-    const targetPos = this._getEnemyLockTargetPos(enemy)
-    if (targetPos)
-      this.cameraRig?.setLookAtOverride?.(targetPos)
+    emitter.emit('combat:toggle_lock', enemy.group)
     emitter.emit('combat:lock', { title: '已锁定', hint: '中键解除' })
   }
 
@@ -698,7 +701,7 @@ export default class World {
       if (this._lockedEnemy) {
         this._lockedEnemy.setLocked?.(false)
         this._lockedEnemy = null
-        this.cameraRig?.setLookAtOverride?.(null)
+        emitter.emit('combat:toggle_lock', null)
         emitter.emit('combat:lock_clear')
       }
       return
@@ -709,7 +712,7 @@ export default class World {
     const enemy = this._lockedEnemy
     if (!enemy?.group) {
       this._lockedEnemy = null
-      this.cameraRig?.setLookAtOverride?.(null)
+      emitter.emit('combat:toggle_lock', null)
       emitter.emit('combat:lock_clear')
       return
     }
@@ -720,10 +723,10 @@ export default class World {
     const dx = epos.x - p.x
     const dz = epos.z - p.z
     const d2 = dx * dx + dz * dz
-    if (d2 > 32 * 32) {
+    if (d2 > 50 * 50) {
       enemy.setLocked?.(false)
       this._lockedEnemy = null
-      this.cameraRig?.setLookAtOverride?.(null)
+      emitter.emit('combat:toggle_lock', null)
       emitter.emit('combat:lock_clear')
       this._stopMaterialGunFire()
       return
@@ -733,10 +736,6 @@ export default class World {
     const current = this.player.getFacingAngle()
     const next = this._lerpAngle(current, desired, 0.12)
     this.player.setFacing(next)
-
-    const targetPos = this._getEnemyLockTargetPos(enemy)
-    if (targetPos)
-      this.cameraRig?.setLookAtOverride?.(targetPos)
   }
 
   _lerpAngle(current, target, t) {
@@ -3698,7 +3697,7 @@ export default class World {
       return
     this._lockedEnemy.setLocked?.(false)
     this._lockedEnemy = null
-    this.cameraRig?.setLookAtOverride?.(null)
+    emitter.emit('combat:toggle_lock', null)
     emitter.emit('combat:lock_clear')
   }
 

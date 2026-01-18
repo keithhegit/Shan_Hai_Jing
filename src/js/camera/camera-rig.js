@@ -47,6 +47,8 @@ export default class CameraRig {
     this._lookAtOverride = null
     this.lockedTarget = null
     this.isLocked = false
+    this._tmpEnemyWorldPos = new THREE.Vector3()
+    this._tmpLookAtMidpoint = new THREE.Vector3()
 
     // 初始化时记录偏移量的绝对值，用于切换时的基准
     this._cachedMagnitude = Math.abs(this.config.follow.offset.x)
@@ -73,7 +75,8 @@ export default class CameraRig {
     this._setupEventListeners()
 
     // 监听锁定事件
-    emitter.on('combat:toggle_lock', this._handleToggleLock.bind(this))
+    this._onCombatToggleLock = this._handleToggleLock.bind(this)
+    emitter.on('combat:toggle_lock', this._onCombatToggleLock)
   }
 
   _handleToggleLock(target) {
@@ -88,7 +91,7 @@ export default class CameraRig {
   }
 
   _setupEventListeners() {
-    emitter.on('input:mouse_move', ({ movementY }) => {
+    this._onMouseMove = ({ movementY }) => {
       const config = this.config.follow.mouseTargetY
       if (!config.enabled)
         return
@@ -96,16 +99,18 @@ export default class CameraRig {
       // 累加速度，实现“软”手感
       const sign = config.invertY ? -1 : 1
       this.mouseYVelocity += movementY * config.sensitivity * sign
-    })
+    }
+    emitter.on('input:mouse_move', this._onMouseMove)
 
-    emitter.on('pointer:unlocked', () => {
+    this._onPointerUnlocked = () => {
       if (this.config.follow.mouseTargetY.unlockReset) {
         // 解锁时是否立即清空或等待回弹？这里选择保持当前值让其自然回弹
         // 如果需要立即重置，可以设置 this.mouseYVelocity = 0; this.mouseYOffset = 0;
       }
-    })
+    }
+    emitter.on('pointer:unlocked', this._onPointerUnlocked)
 
-    emitter.on('input:wheel', ({ deltaY }) => {
+    this._onWheel = ({ deltaY }) => {
       // 滚轮控制相机高度 (常规偏移 Y)
       // 灵敏度因子，deltaY 通常是 100 左右
       const sensitivity = 0.005
@@ -118,7 +123,8 @@ export default class CameraRig {
 
       // 更新常规偏移
       this._normalOffset.y = newY
-    })
+    }
+    emitter.on('input:wheel', this._onWheel)
   }
 
   attachPlayer(player) {
@@ -289,9 +295,9 @@ export default class CameraRig {
       this.group.position.copy(this._smoothedPosition)
 
       // 让 Rig 朝向敌人
-      const enemyPos = this.lockedTarget.position
-      const dx = enemyPos.x - playerPos.x
-      const dz = enemyPos.z - playerPos.z
+      this.lockedTarget.getWorldPosition(this._tmpEnemyWorldPos)
+      const dx = this._tmpEnemyWorldPos.x - playerPos.x
+      const dz = this._tmpEnemyWorldPos.z - playerPos.z
       const angle = Math.atan2(dx, dz)
       this.group.rotation.y = angle
     }
@@ -315,8 +321,14 @@ export default class CameraRig {
     this.cameraAnchor.getWorldPosition(cameraPos)
 
     if (this.isLocked && this.lockedTarget) {
-      // 锁定模式：注视点为 敌人胸口
-      targetPos.copy(this.lockedTarget.position)
+      // 锁定模式：注视点为 玩家+敌人 中点
+      this.lockedTarget.getWorldPosition(this._tmpEnemyWorldPos)
+      this._tmpLookAtMidpoint.set(
+        (playerPos.x + this._tmpEnemyWorldPos.x) * 0.5,
+        (playerPos.y + this._tmpEnemyWorldPos.y) * 0.5,
+        (playerPos.z + this._tmpEnemyWorldPos.z) * 0.5,
+      )
+      targetPos.copy(this._tmpLookAtMidpoint)
       targetPos.y += 1.5
     }
     else {
@@ -770,6 +782,15 @@ export default class CameraRig {
     if (this.group) {
       this.experience.scene.remove(this.group)
     }
+
+    if (this._onMouseMove)
+      emitter.off('input:mouse_move', this._onMouseMove)
+    if (this._onPointerUnlocked)
+      emitter.off('pointer:unlocked', this._onPointerUnlocked)
+    if (this._onWheel)
+      emitter.off('input:wheel', this._onWheel)
+    if (this._onCombatToggleLock)
+      emitter.off('combat:toggle_lock', this._onCombatToggleLock)
 
     // Clear references
     this.target = null

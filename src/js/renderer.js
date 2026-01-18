@@ -44,7 +44,17 @@ export default class Renderer {
         randomness: 0.5, // 随机性强度
         opacity: 0.0, // 当前透明度（由 Player 控制）
       },
+      vignette: {
+        enabled: true,
+        intensity: 0.65,
+        innerRadius: 0.35,
+        outerRadius: 0.75,
+        fadeSpeed: 10.0,
+      },
     }
+
+    this._vignetteIntensity = 0
+    this._vignetteTargetIntensity = 0
 
     this.setInstance()
     this.setPostProcess()
@@ -53,6 +63,17 @@ export default class Renderer {
     if (this.debug.active) {
       this.debugInit()
     }
+
+    this._onCombatLock = () => {
+      if (!this.postProcessConfig.vignette.enabled)
+        return
+      this._vignetteTargetIntensity = this.postProcessConfig.vignette.intensity
+    }
+    this._onCombatLockClear = () => {
+      this._vignetteTargetIntensity = 0
+    }
+    emitter.on('combat:lock', this._onCombatLock)
+    emitter.on('combat:lock_clear', this._onCombatLockClear)
 
     // 将渲染器与相机绑定，支持动态切换相机实例
     this.camera.attachRenderer(this)
@@ -130,7 +151,40 @@ export default class Renderer {
     this.speedLinePass.enabled = this.postProcessConfig.speedLines.enabled
     this.composer.addPass(this.speedLinePass)
 
-    // 4. OutputPass - 色调映射与色彩空间转换（确保最终输出正确）
+    this.vignettePass = new ShaderPass({
+      uniforms: {
+        tDiffuse: { value: null },
+        uIntensity: { value: 0.0 },
+        uInnerRadius: { value: this.postProcessConfig.vignette.innerRadius },
+        uOuterRadius: { value: this.postProcessConfig.vignette.outerRadius },
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform float uIntensity;
+        uniform float uInnerRadius;
+        uniform float uOuterRadius;
+        varying vec2 vUv;
+        void main() {
+          vec4 col = texture2D(tDiffuse, vUv);
+          float d = distance(vUv, vec2(0.5));
+          float vig = smoothstep(uInnerRadius, uOuterRadius, d);
+          float k = clamp(uIntensity, 0.0, 1.0);
+          col.rgb *= (1.0 - vig * k);
+          gl_FragColor = col;
+        }
+      `,
+    })
+    this.vignettePass.enabled = this.postProcessConfig.vignette.enabled
+    this.composer.addPass(this.vignettePass)
+
+    // 5. OutputPass - 色调映射与色彩空间转换（确保最终输出正确）
     this.outputPass = new OutputPass()
     this.composer.addPass(this.outputPass)
   }
@@ -269,6 +323,50 @@ export default class Renderer {
       readonly: true,
     })
 
+    const vignetteFolder = postProcessFolder.addFolder({
+      title: 'Vignette 暗角',
+      expanded: true,
+    })
+
+    vignetteFolder.addBinding(this.postProcessConfig.vignette, 'enabled', {
+      label: '启用',
+    }).on('change', (ev) => {
+      this.vignettePass.enabled = ev.value
+      if (!ev.value)
+        this._vignetteTargetIntensity = 0
+    })
+
+    vignetteFolder.addBinding(this.postProcessConfig.vignette, 'intensity', {
+      label: '强度',
+      min: 0,
+      max: 1,
+      step: 0.01,
+    }).on('change', (ev) => {
+      if (!this.postProcessConfig.vignette.enabled) {
+        this._vignetteTargetIntensity = 0
+        return
+      }
+      this._vignetteTargetIntensity = this._vignetteTargetIntensity > 0 ? ev.value : 0
+    })
+
+    vignetteFolder.addBinding(this.postProcessConfig.vignette, 'innerRadius', {
+      label: '内半径',
+      min: 0,
+      max: 0.8,
+      step: 0.01,
+    }).on('change', (ev) => {
+      this.vignettePass.uniforms.uInnerRadius.value = ev.value
+    })
+
+    vignetteFolder.addBinding(this.postProcessConfig.vignette, 'outerRadius', {
+      label: '外半径',
+      min: 0.05,
+      max: 1.2,
+      step: 0.01,
+    }).on('change', (ev) => {
+      this.vignettePass.uniforms.uOuterRadius.value = ev.value
+    })
+
     // ===== 阴影质量控制 =====
     const shadowFolder = this.debug.ui.addFolder({
       title: 'Shadow Quality 阴影质量',
@@ -320,6 +418,14 @@ export default class Renderer {
     // 更新速度线时间 uniform
     this.speedLinePass.uniforms.uTime.value = this.experience.time.elapsed * 0.001
 
+    const dt = (this.experience.time.delta ?? 0) * 0.001
+    const fade = Math.max(0, Number(this.postProcessConfig.vignette.fadeSpeed) || 0)
+    const a = Math.min(1, dt * fade)
+    this._vignetteIntensity += (this._vignetteTargetIntensity - this._vignetteIntensity) * a
+    if (!this.postProcessConfig.vignette.enabled)
+      this._vignetteIntensity = 0
+    this.vignettePass.uniforms.uIntensity.value = this._vignetteIntensity
+
     // 使用 EffectComposer 渲染（包含所有后期处理）
     this.composer.render()
 
@@ -337,6 +443,11 @@ export default class Renderer {
   }
 
   destroy() {
+    if (this._onCombatLock)
+      emitter.off('combat:lock', this._onCombatLock)
+    if (this._onCombatLockClear)
+      emitter.off('combat:lock_clear', this._onCombatLockClear)
+
     // Dispose all passes
     if (this.renderPass)
       this.renderPass.dispose?.()
@@ -344,6 +455,8 @@ export default class Renderer {
       this.bloomPass.dispose?.()
     if (this.speedLinePass)
       this.speedLinePass.dispose?.()
+    if (this.vignettePass)
+      this.vignettePass.dispose?.()
     if (this.outputPass)
       this.outputPass.dispose?.()
 

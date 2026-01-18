@@ -132,16 +132,22 @@ export class PlayerAnimationController {
     if (!action)
       return false
 
-    if (this._staticPoseAction === action)
-      return true
-
-    this._staticPoseAction = action
-
     const clip = action.getClip?.()
     const duration = Math.max(0, clip?.duration ?? 0)
+    const nextWeight = Math.max(0, Math.min(1, Number(weight) || 0))
+
+    if (this._staticPoseAction === action) {
+      action.enabled = true
+      action.setEffectiveWeight(nextWeight)
+      action.time = duration
+      action.paused = true
+      return true
+    }
+
+    this._staticPoseAction = action
     action.enabled = true
     action.reset()
-    action.setEffectiveWeight(Math.max(0, Math.min(1, Number(weight) || 0)))
+    action.setEffectiveWeight(nextWeight)
     action.setLoop(THREE.LoopOnce, 1)
     action.clampWhenFinished = true
     action.play()

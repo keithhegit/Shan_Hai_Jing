@@ -64,8 +64,9 @@ export default class Player {
     this.setModel()
 
     // Animation Controller needs model
-    const { animations, waveClipName } = this._normalizePlayerAnimations(this.resource.animations)
+    const { animations, waveClipName, holdingBothClipName } = this._normalizePlayerAnimations(this.resource.animations)
     this._waveClipName = waveClipName
+    this._holdingBothClipName = holdingBothClipName
     this.animation = new PlayerAnimationController(this.model, animations)
 
     this._matterGun = null
@@ -238,6 +239,8 @@ export default class Player {
 
     const wave = findClipByWords(['wave'])
     const waveClipName = wave?.name || null
+    const holdingBoth = findClipByWords(['holding', 'both'])
+    const holdingBothClipName = holdingBoth?.name || null
 
     const out = [...clips]
 
@@ -259,7 +262,7 @@ export default class Player {
         out.push(renamed)
     }
 
-    return { animations: out, waveClipName }
+    return { animations: out, waveClipName, holdingBothClipName }
   }
 
   setMatterGunEquipped(isEquipped) {
@@ -293,11 +296,31 @@ export default class Player {
       if (!obj?.isBone || !obj?.name)
         return
       const n = String(obj.name).toLowerCase()
-      const score = n.includes('righthand') || n.includes('right_hand') || n.includes('hand_r') || n.includes('r_hand')
-        ? 10
-        : n.includes('hand')
-          ? 2
-          : 0
+      const isLeft = n.includes('left') || n.includes('hand_l') || n.includes('l_hand') || n.includes('_l') || n.includes('.l') || n.endsWith('l')
+      if (isLeft)
+        return
+
+      const isHand = n.includes('hand')
+      const isWrist = n.includes('wrist')
+      const isRight = n.includes('right')
+        || n.includes('righthand')
+        || n.includes('hand_r')
+        || n.includes('r_hand')
+        || n.includes('mixamorig:righthand')
+        || n.includes('mixamorig_right_hand')
+
+      const exactRightHand = n.includes('righthand') || n.includes('hand_r') || n.includes('mixamorig:righthand')
+      let score = 0
+      if (exactRightHand)
+        score = 60
+      else if (isRight && isHand)
+        score = 40
+      else if (isRight && isWrist)
+        score = 28
+      else if (isHand)
+        score = 12
+      else if (isWrist)
+        score = 6
       if (score > 0)
         candidates.push({ obj, score })
     })
@@ -316,7 +339,6 @@ export default class Player {
       return
 
     const gun = scene.clone(true)
-    gun.scale.setScalar(0.14)
     gun.rotation.set(0, 0, 0)
     gun.position.set(0, 0, 0)
     gun.traverse((child) => {
@@ -331,16 +353,55 @@ export default class Player {
       }
     })
 
+    const gunSize = new THREE.Vector3(1, 1, 1)
+    let gunBox = null
+    try {
+      const box = new THREE.Box3().setFromObject(gun)
+      box.getSize(gunSize)
+      const maxDim = Math.max(gunSize.x, gunSize.y, gunSize.z)
+      const targetMax = 0.55
+      const scalar = Number.isFinite(maxDim) && maxDim > 0.0001
+        ? THREE.MathUtils.clamp(targetMax / maxDim, 0.05, 2.5)
+        : 0.5
+      gun.scale.setScalar(scalar)
+      gun.updateMatrixWorld(true)
+      const box2 = new THREE.Box3().setFromObject(gun)
+      const center = new THREE.Vector3()
+      box2.getCenter(center)
+      gun.position.sub(center)
+      gun.updateMatrixWorld(true)
+      const box3 = new THREE.Box3().setFromObject(gun)
+      box3.getSize(gunSize)
+      gunBox = box3
+    }
+    catch {
+      gun.scale.setScalar(0.5)
+    }
+
     const hold = new THREE.Group()
     hold.add(gun)
-    hold.rotation.set(0.2, Math.PI / 2, 0)
-    hold.position.set(0.1, 0.03, 0.15)
+    hold.rotation.set(0, Math.PI / 2, 0)
+    hold.position.set(0.03, 0.015, 0.085)
 
     const hand = this._findHandBone() || this.model
     hand.add(hold)
 
     const muzzle = new THREE.Object3D()
-    muzzle.position.set(0.2, 0.02, 0)
+    if (gunBox) {
+      const size = new THREE.Vector3()
+      gunBox.getSize(size)
+      const axis = size.x >= size.y && size.x >= size.z
+        ? 'x'
+        : (size.z >= size.y ? 'z' : 'y')
+      const center = new THREE.Vector3()
+      gunBox.getCenter(center)
+      const muzzlePos = center.clone()
+      muzzlePos[axis] = gunBox.max[axis]
+      muzzle.position.copy(muzzlePos)
+    }
+    else {
+      muzzle.position.set((gunSize.x || 0.25) * 0.55, (gunSize.y || 0.25) * 0.1, 0)
+    }
     hold.add(muzzle)
 
     this._matterGun = hold
@@ -432,6 +493,8 @@ export default class Player {
 
     // 直拳（Z键）- 左右交替
     emitter.on('input:punch_straight', () => {
+      if (this.isDead || this.isBlocking || !!this.inputState?.c)
+        return
       const anim = this._useLeftStraight
         ? AnimationClips.STRAIGHT_PUNCH // 左直拳
         : AnimationClips.RIGHT_STRAIGHT_PUNCH // 右直拳
@@ -441,6 +504,8 @@ export default class Player {
 
     // 勾拳（X键）- 左右交替
     emitter.on('input:punch_hook', () => {
+      if (this.isDead || this.isBlocking || !!this.inputState?.c)
+        return
       const anim = this._useLeftHook
         ? AnimationClips.HOOK_PUNCH // 左勾拳
         : AnimationClips.RIGHT_HOOK_PUNCH // 右勾拳
@@ -500,14 +565,15 @@ export default class Player {
       this._equipMatterGun()
 
     const isMoving = this.movement.isMoving(resolvedInput)
-    const shouldStaticPose = !!this._waveClipName
+    const poseClipName = this._holdingBothClipName || this._waveClipName
+    const shouldStaticPose = !!poseClipName
       && (this._isMatterGunAiming || this._wantsMatterGunEquipped)
       && this.movement.isGrounded
       && !isCombat
       && !isBlockingAction
 
     if (shouldStaticPose)
-      this.animation.setStaticPose(this._waveClipName, this._isMatterGunAiming ? 1 : (isMoving ? 0.25 : 0.85))
+      this.animation.setStaticPose(poseClipName, this._isMatterGunAiming ? 1 : (isMoving ? 0.25 : 0.85))
     else
       this.animation.clearStaticPose()
 

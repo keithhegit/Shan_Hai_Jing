@@ -1,11 +1,25 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import emitter from '../js/utils/event-bus.js'
 
 const maxHearts = ref(5)
 const currentHearts = ref(5)
 const staminaPercent = ref(100)
 const inventorySummary = ref({ backpackTotal: 0, warehouseTotal: 0, carriedPet: '' })
+
+const hpRatio = computed(() => {
+  const max = Math.max(1, Number(maxHearts.value) || 1)
+  const cur = Math.max(0, Math.min(max, Number(currentHearts.value) || 0))
+  return cur / max
+})
+
+const heartChar = computed(() => {
+  if (hpRatio.value <= 0.25)
+    return '💛'
+  if (hpRatio.value <= 0.5)
+    return '🧡'
+  return '❤️'
+})
 
 function updateStats(stats) {
   if (stats.hp !== undefined)
@@ -41,7 +55,7 @@ onBeforeUnmount(() => {
         class="heart"
         :class="{ lost: i > currentHearts }"
       >
-        ❤️
+        {{ i > currentHearts ? '🖤' : heartChar }}
       </div>
     </div>
 

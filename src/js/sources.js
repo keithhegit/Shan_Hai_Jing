@@ -30,7 +30,7 @@ export default [
   {
     name: 'playerModel',
     type: 'gltfModel',
-    path: 'models/character/Character_Male_1.gltf',
+    path: 'models/character/character-male-f.glb',
   },
   // ===== Enemies =====
   { name: 'enemy_demon', type: 'gltfModel', path: 'models/Enemies/Demon.gltf', animations: ['Attack', 'Death', 'HitRecieve', 'Idle', 'Jump', 'Run', 'Walk'] },

@@ -21,6 +21,7 @@ export default class HumanoidEnemy {
     this.maxHp = hp
     this.hp = hp
     this.isDead = false
+    this.isLocked = false
     this._baseScale = scale
     this._destroyTimer = null
     this.hitRadius = 0.9
@@ -35,6 +36,7 @@ export default class HumanoidEnemy {
     this._attackDamage = 1
     this._attackRange = 2.1
     this._attackWindupMs = 260
+    this._lockHighlightRestore = null
 
     this.group = new THREE.Group()
     this.group.position.copy(position)
@@ -95,7 +97,7 @@ export default class HumanoidEnemy {
     const lockRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.85, 0.06, 16, 48),
       new THREE.MeshBasicMaterial({
-        color: colors.accent || 0xB9_FF_C7,
+        color: 0xFF_3B_3B,
         transparent: true,
         opacity: 0.95,
         depthWrite: false,
@@ -173,7 +175,7 @@ export default class HumanoidEnemy {
     const lockRing = new THREE.Mesh(
       new THREE.TorusGeometry(0.85, 0.06, 16, 48),
       new THREE.MeshBasicMaterial({
-        color: palette.accent,
+        color: 0xFF_3B_3B,
         transparent: true,
         opacity: 0.95,
         depthWrite: false,
@@ -260,7 +262,7 @@ export default class HumanoidEnemy {
     const ratio = Math.max(0, Math.min(1, this.hp / denom))
     this._hpBarFill.scale.x = ratio
     if (this._hpBarBg)
-      this._hpBarBg.visible = !this.isDead
+      this._hpBarBg.visible = !this.isDead && !!this.isLocked
   }
 
   addTo(parent) {
@@ -356,8 +358,59 @@ export default class HumanoidEnemy {
   }
 
   setLocked(isLocked) {
+    this.isLocked = !!isLocked
     if (this.parts && this.parts.lockRing)
-      this.parts.lockRing.visible = !!isLocked
+      this.parts.lockRing.visible = this.isLocked
+    this._updateHpBar()
+    this._applyLockHighlight(this.isLocked)
+  }
+
+  _applyLockHighlight(enabled) {
+    const next = !!enabled
+    if (!next) {
+      if (Array.isArray(this._lockHighlightRestore)) {
+        for (const entry of this._lockHighlightRestore) {
+          const mat = entry?.mat
+          if (!mat)
+            continue
+          if (mat.emissive && entry.emissive) {
+            mat.emissive.copy(entry.emissive)
+          }
+          if (entry.emissiveIntensity !== undefined && mat.emissiveIntensity !== undefined) {
+            mat.emissiveIntensity = entry.emissiveIntensity
+          }
+        }
+      }
+      this._lockHighlightRestore = null
+      return
+    }
+
+    if (this._lockHighlightRestore)
+      return
+
+    const restore = []
+    const root = this.model || this.group
+    root?.traverse?.((obj) => {
+      if (!obj?.isMesh)
+        return
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+      for (const mat of mats) {
+        if (!mat)
+          continue
+        if (!mat.emissive)
+          continue
+        restore.push({
+          mat,
+          emissive: mat.emissive.clone(),
+          emissiveIntensity: mat.emissiveIntensity,
+        })
+        mat.emissive.setHex(0x66_0000)
+        if (mat.emissiveIntensity !== undefined)
+          mat.emissiveIntensity = Math.max(0.35, Number(mat.emissiveIntensity) || 0)
+      }
+    })
+
+    this._lockHighlightRestore = restore.length > 0 ? restore : []
   }
 
   _findActionByIncludes(parts) {

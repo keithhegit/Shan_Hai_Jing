@@ -38,10 +38,20 @@ export default class Resources {
   }
 
   setLoaders() {
+    const missingColorMapPng = 'textures/background/background.png'
+    this.loadingManager = new THREE.LoadingManager()
+    this.loadingManager.setURLModifier((url) => {
+      const raw = String(url ?? '')
+      const normalized = raw.replaceAll('\\', '/').toLowerCase()
+      if (normalized.endsWith('textures/colormap.png'))
+        return missingColorMapPng
+      return url
+    })
+
     this.loaders = {}
-    this.loaders.gltfLoader = new GLTFLoader()
-    this.loaders.textureLoader = new THREE.TextureLoader()
-    this.loaders.cubeTextureLoader = new THREE.CubeTextureLoader()
+    this.loaders.gltfLoader = new GLTFLoader(this.loadingManager)
+    this.loaders.textureLoader = new THREE.TextureLoader(this.loadingManager)
+    this.loaders.cubeTextureLoader = new THREE.CubeTextureLoader(this.loadingManager)
     this.loaders.fontLoader = new FontLoader()
     this.loaders.fbxLoader = new FBXLoader()
     this.loaders.audioLoader = new THREE.AudioLoader()
