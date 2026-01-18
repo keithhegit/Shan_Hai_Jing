@@ -3007,6 +3007,7 @@ export default class World {
         const aggroR = Number.isFinite(stats.aggroRadius) ? stats.aggroRadius : 8
         const attackR = Number.isFinite(stats.attackRange) ? stats.attackRange : 2.1
         const forceAggro = (data.forceAggroUntil ?? 0) > now
+        const isEnemy = animal._resourceKey?.startsWith('enemy_') ?? false
 
         const ex = animal.group.position.x
         const ez = animal.group.position.z
@@ -3016,7 +3017,15 @@ export default class World {
         const aggro2 = aggroR * aggroR
         const attack2 = attackR * attackR
 
-        if (forceAggro || d2p <= aggro2) {
+        const shouldAggro = forceAggro || (isEnemy && d2p <= aggro2)
+
+        if (!shouldAggro && (data.state === 'chase' || data.state === 'attack')) {
+          data.state = 'idle'
+          data.timer = 1.2 + Math.random() * 1.8
+          animal.playAnimation?.('Idle')
+        }
+
+        if (shouldAggro) {
           const len = Math.hypot(dxp, dzp)
           const nx = len > 0.0001 ? (dxp / len) : 0
           const nz = len > 0.0001 ? (dzp / len) : 1

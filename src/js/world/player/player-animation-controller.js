@@ -114,9 +114,6 @@ export class PlayerAnimationController {
   update(dt, playerState) {
     this.mixer.update(dt * 0.001)
 
-    if (this._staticPoseAction)
-      return
-
     // In debug mode, we might want to continuously update timescales if we expect them to change per frame
     // But for performance, we usually rely on the debug panel callback to trigger updateTimeScales()
     // However, to be safe and simple for this implementation, we can call it if debug is active
@@ -130,7 +127,7 @@ export class PlayerAnimationController {
     })
   }
 
-  setStaticPose(name) {
+  setStaticPose(name, weight = 0.85) {
     const action = this.actions[name]
     if (!action)
       return false
@@ -140,22 +137,11 @@ export class PlayerAnimationController {
 
     this._staticPoseAction = action
 
-    if (this.currentAction) {
-      this.currentAction.stop()
-      this.currentAction = null
-    }
-
-    for (const a of Object.values(this.actions)) {
-      if (!a)
-        continue
-      a.setEffectiveWeight(0)
-    }
-
     const clip = action.getClip?.()
     const duration = Math.max(0, clip?.duration ?? 0)
     action.enabled = true
     action.reset()
-    action.setEffectiveWeight(1)
+    action.setEffectiveWeight(Math.max(0, Math.min(1, Number(weight) || 0)))
     action.setLoop(THREE.LoopOnce, 1)
     action.clampWhenFinished = true
     action.play()
@@ -172,17 +158,12 @@ export class PlayerAnimationController {
     this._staticPoseAction.paused = false
     this._staticPoseAction.stop()
     this._staticPoseAction = null
-    this.fadeToLocomotion()
-    this.stateMachine.setState(AnimationStates.LOCOMOTION)
   }
 
   /**
    * 播放指定動作 (處理 CrossFade)
    */
   playAction(name, forcedDuration = null) {
-    if (this._staticPoseAction)
-      return
-
     const newAction = this.actions[name]
     if (!newAction)
       return

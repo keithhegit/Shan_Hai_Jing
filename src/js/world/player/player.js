@@ -71,6 +71,7 @@ export default class Player {
     this._matterGun = null
     this._matterGunMuzzle = null
     this._isMatterGunAiming = false
+    this._wantsMatterGunEquipped = false
 
     this.setupInputListeners()
     emitter.emit('ui:update_stats', { hp: this.hp, maxHp: this.maxHp, stamina: this.stamina })
@@ -263,8 +264,7 @@ export default class Player {
 
   setMatterGunEquipped(isEquipped) {
     const next = !!isEquipped
-    if (next === !!this._matterGun)
-      return
+    this._wantsMatterGunEquipped = next
     if (next)
       this._equipMatterGun()
     else
@@ -276,11 +276,6 @@ export default class Player {
     if (next === this._isMatterGunAiming)
       return
     this._isMatterGunAiming = next
-
-    if (this._isMatterGunAiming && this._waveClipName)
-      this.animation.setStaticPose(this._waveClipName)
-    else
-      this.animation.clearStaticPose()
   }
 
   getMatterGunMuzzleWorldPosition() {
@@ -321,14 +316,25 @@ export default class Player {
       return
 
     const gun = scene.clone(true)
-    gun.scale.setScalar(0.08)
+    gun.scale.setScalar(0.14)
     gun.rotation.set(0, 0, 0)
     gun.position.set(0, 0, 0)
+    gun.traverse((child) => {
+      if (!child?.isMesh)
+        return
+      child.castShadow = true
+      child.receiveShadow = true
+      child.frustumCulled = false
+      if (child.material) {
+        child.material.side = THREE.FrontSide
+        child.material.transparent = true
+      }
+    })
 
     const hold = new THREE.Group()
     hold.add(gun)
     hold.rotation.set(0.2, Math.PI / 2, 0)
-    hold.position.set(0.08, 0.02, 0.12)
+    hold.position.set(0.1, 0.03, 0.15)
 
     const hand = this._findHandBone() || this.model
     hand.add(hold)
@@ -490,6 +496,21 @@ export default class Player {
     // Update Movement
     this.movement.update(resolvedInput, isCombat)
 
+    if (this._wantsMatterGunEquipped && !this._matterGun)
+      this._equipMatterGun()
+
+    const isMoving = this.movement.isMoving(resolvedInput)
+    const shouldStaticPose = !!this._waveClipName
+      && (this._isMatterGunAiming || this._wantsMatterGunEquipped)
+      && this.movement.isGrounded
+      && !isCombat
+      && !isBlockingAction
+
+    if (shouldStaticPose)
+      this.animation.setStaticPose(this._waveClipName, this._isMatterGunAiming ? 1 : (isMoving ? 0.25 : 0.85))
+    else
+      this.animation.clearStaticPose()
+
     // ===== 平滑转向 =====
     if (Math.abs(this.config.facingAngle - this.targetFacingAngle) > 0.0001) {
       // 角度 lerp 平滑
@@ -504,7 +525,7 @@ export default class Player {
     const playerState = {
       inputState: resolvedInput,
       directionWeights: weights, // Pass normalized weights
-      isMoving: this.movement.isMoving(resolvedInput),
+      isMoving,
       isGrounded: this.movement.isGrounded,
       speedProfile: this.movement.getSpeedProfile(resolvedInput),
       isBlocking: this.isBlocking || !!this.inputState.c,
