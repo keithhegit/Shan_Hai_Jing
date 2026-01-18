@@ -56,7 +56,9 @@ test('smoke: app loads without runtime errors', async ({ page }, testInfo) => {
 
   await page.evaluate(() => {
     const world = window.Experience.world
-    world._activatePortal(world.portals[0])
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
   })
 
   await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
@@ -171,8 +173,9 @@ test('combat: lock-on toggles and melee hit reduces hp', async ({ page }) => {
 
   await page.evaluate(() => {
     const world = window.Experience.world
-    const portal = world.portals.find(p => p.id === 'snow') ?? world.portals[0]
-    world._activatePortal(portal)
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
   })
 
   await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })

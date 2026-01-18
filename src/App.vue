@@ -21,6 +21,7 @@ const lockState = ref(null)
 const inventoryPanel = ref(null)
 const inventoryData = ref({ panel: null, backpack: {}, warehouse: {} })
 const chestModal = ref(null)
+const portalSelectModal = ref(null)
 
 function onPortalPrompt(payload) {
   portalPrompt.value = payload
@@ -109,6 +110,33 @@ function onChestUpdate(payload) {
   if (!chestModal.value || chestModal.value.id !== payload.id)
     return
   chestModal.value = { ...chestModal.value, ...payload }
+}
+
+function onChestCloseUi(payload) {
+  const id = payload?.id
+  if (!id)
+    return
+  if (!chestModal.value || chestModal.value.id !== id)
+    return
+  closeChestModal()
+}
+
+function onPortalSelectOpen(payload) {
+  portalSelectModal.value = payload
+}
+
+function closePortalSelectModal() {
+  if (!portalSelectModal.value)
+    return
+  portalSelectModal.value = null
+  emitter.emit('portal:select_close')
+}
+
+function chooseDungeon(id) {
+  if (!portalSelectModal.value || !id)
+    return
+  portalSelectModal.value = null
+  emitter.emit('portal:select', { id })
 }
 
 function closeChestModal() {
@@ -202,6 +230,10 @@ function chestKeyEntries() {
 
 function onKeyDown(event) {
   const key = event.key?.toLowerCase?.() ?? event.key
+  if (portalSelectModal.value && key === 'escape') {
+    closePortalSelectModal()
+    return
+  }
   if (chestModal.value && key === 'escape') {
     closeChestModal()
     return
@@ -239,6 +271,8 @@ onMounted(() => {
   emitter.on('inventory:update', onInventoryUpdate)
   emitter.on('chest:open', onChestOpen)
   emitter.on('chest:update', onChestUpdate)
+  emitter.on('chest:close_ui', onChestCloseUi)
+  emitter.on('portal:select_open', onPortalSelectOpen)
   window.addEventListener('keydown', onKeyDown)
 })
 
@@ -261,6 +295,8 @@ onBeforeUnmount(() => {
   emitter.off('inventory:update', onInventoryUpdate)
   emitter.off('chest:open', onChestOpen)
   emitter.off('chest:update', onChestUpdate)
+  emitter.off('chest:close_ui', onChestCloseUi)
+  emitter.off('portal:select_open', onPortalSelectOpen)
   onDungeonToastClear()
   window.removeEventListener('keydown', onKeyDown)
   experience?.destroy()
@@ -277,7 +313,7 @@ onBeforeUnmount(() => {
     <!-- 小地图 (z-index: 1000) -->
     <MiniMap />
     <div
-      v-if="!interactableModal && !chestModal && !loadingState && dungeonProgress"
+      v-if="!portalSelectModal && !interactableModal && !chestModal && !loadingState && dungeonProgress"
       class="pointer-events-none absolute left-1/2 top-6 z-[1800] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-full border border-white/20 bg-white/15 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md">
@@ -285,7 +321,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="!interactableModal && !chestModal && !loadingState && dungeonToast"
+      v-if="!portalSelectModal && !interactableModal && !chestModal && !loadingState && dungeonToast"
       class="pointer-events-none absolute left-1/2 top-[3.75rem] z-[1800] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-full border border-white/20 bg-black/35 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md">
@@ -293,7 +329,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="!interactableModal && !chestModal && !loadingState && lockState"
+      v-if="!portalSelectModal && !interactableModal && !chestModal && !loadingState && lockState"
       class="pointer-events-none absolute left-1/2 top-24 z-[1800] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-full border border-white/20 bg-black/35 px-4 py-2 text-center text-xs font-semibold text-white shadow-xl backdrop-blur-md">
@@ -301,7 +337,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
     <div
-      v-if="!interactableModal && !chestModal && !loadingState && (interactablePrompt || portalPrompt)"
+      v-if="!portalSelectModal && !interactableModal && !chestModal && !loadingState && (interactablePrompt || portalPrompt)"
       class="pointer-events-none fixed left-1/2 top-[15vh] z-[9000] w-full max-w-[90vw] -translate-x-1/2 px-4"
     >
       <div class="mx-auto w-fit rounded-xl border border-white/20 bg-white/15 px-6 py-4 text-center text-white shadow-xl backdrop-blur-md">
@@ -315,7 +351,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div
-      v-if="!interactableModal && !chestModal && !loadingState"
+      v-if="!portalSelectModal && !interactableModal && !chestModal && !loadingState"
       class="pointer-events-none fixed right-6 top-6 z-[9000] w-[260px]"
     >
       <div class="rounded-2xl border border-white/15 bg-black/40 px-5 py-4 text-xs text-white shadow-2xl backdrop-blur-md">
@@ -356,6 +392,41 @@ onBeforeUnmount(() => {
           <div class="flex justify-between">
             <span>B / H</span> <span>背包 / 仓库</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="portalSelectModal && !interactableModal && !chestModal && !loadingState && !inventoryPanel"
+      class="absolute inset-0 z-[9500] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
+      @click.self="closePortalSelectModal"
+    >
+      <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+        <div class="flex items-start justify-between gap-4">
+          <div class="text-lg font-semibold drop-shadow">
+            {{ portalSelectModal.title || '选择地牢' }}
+          </div>
+          <button
+            class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+            @click="closePortalSelectModal"
+          >
+            关闭 (ESC)
+          </button>
+        </div>
+        <div class="mt-4 space-y-2">
+          <button
+            v-for="opt in (portalSelectModal.options || [])"
+            :key="`dsel:${opt.id}`"
+            class="flex w-full items-center justify-between gap-3 rounded-xl border border-white/15 bg-black/30 px-4 py-3 text-left text-sm font-semibold text-white hover:bg-black/35"
+            @click="chooseDungeon(opt.id)"
+          >
+            <span class="truncate">{{ opt.name }}</span>
+            <span class="shrink-0 text-xs opacity-85">
+              <span v-if="opt.completed">已完成</span>
+              <span v-else-if="(opt.total || 0) > 0">{{ opt.read || 0 }}/{{ opt.total || 0 }}</span>
+              <span v-else> </span>
+            </span>
+          </button>
         </div>
       </div>
     </div>

@@ -304,7 +304,7 @@ export default class World {
           return
         }
         if (this._activePortal)
-          this._activatePortal(this._activePortal)
+          this._openDungeonSelect()
       }
 
       this._onInteractableClose = (payload) => {
@@ -455,6 +455,30 @@ export default class World {
       emitter.on('chest:use_key', this._onChestUseKey)
       emitter.on('chest:take', this._onChestTakeItem)
 
+      this._onPortalSelectClose = () => {
+        if (this.currentWorld !== 'hub')
+          return
+        if (this.isPaused) {
+          this.isPaused = false
+          this._emitDungeonState()
+          this.experience.pointerLock?.requestLock?.()
+        }
+      }
+      this._onPortalSelect = (payload) => {
+        if (this.currentWorld !== 'hub')
+          return
+        const id = payload?.id
+        if (!id)
+          return
+        const portal = (this._dungeonPortals || []).find(p => p?.id === id)
+        if (!portal)
+          return
+        this._activatePortal(portal)
+      }
+
+      emitter.on('portal:select_close', this._onPortalSelectClose)
+      emitter.on('portal:select', this._onPortalSelect)
+
       this._ensureStarterMatterGun()
       this._emitInventorySummary()
     })
@@ -475,19 +499,21 @@ export default class World {
   }
 
   _initMaterialGunBeam() {
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(this._materialGunBeamPositions, 3))
-    const mat = new THREE.LineBasicMaterial({
+    const radius = 0.09
+    const geo = new THREE.CylinderGeometry(radius, radius, 1, 10, 1, true)
+    const mat = new THREE.MeshBasicMaterial({
       color: 0xFF_3B_3B,
       transparent: true,
       opacity: 0.9,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
     })
-    const line = new THREE.Line(geo, mat)
-    line.frustumCulled = false
-    line.visible = false
-    this._materialGunBeam = line
-    this.scene.add(line)
+    const beam = new THREE.Mesh(geo, mat)
+    beam.frustumCulled = false
+    beam.visible = false
+    this._materialGunBeam = beam
+    this.scene.add(beam)
   }
 
   _ensureStarterMatterGun() {
@@ -580,8 +606,21 @@ export default class World {
     this._materialGunBeamPositions[3] = end.x
     this._materialGunBeamPositions[4] = end.y
     this._materialGunBeamPositions[5] = end.z
-    this._materialGunBeam.geometry.attributes.position.needsUpdate = true
-    this._materialGunBeam.visible = true
+
+    const beam = this._materialGunBeam
+    const len = Math.sqrt(d2)
+    const mid = new THREE.Vector3(
+      (start.x + end.x) * 0.5,
+      (start.y + end.y) * 0.5,
+      (start.z + end.z) * 0.5,
+    )
+    const dir = new THREE.Vector3(dx, dy, dz).multiplyScalar(1 / Math.max(0.000001, len))
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+
+    beam.position.copy(mid)
+    beam.quaternion.copy(q)
+    beam.scale.set(1, len, 1)
+    beam.visible = true
     this.player.setMatterGunAiming(true)
 
     const now = this.experience.time?.elapsed ?? 0
@@ -939,17 +978,30 @@ export default class World {
   }
 
   _getRequiredKeyForPortalChest(portalId) {
-    const requiredKeyByPortal = {
-      plains: 'key_forest',
-      snow: 'key_plains',
-      desert: 'key_snow',
-      forest: 'key_desert',
-    }
-    return requiredKeyByPortal?.[portalId] || null
+    if (!portalId)
+      return null
+    if (portalId !== 'plains' && portalId !== 'snow' && portalId !== 'desert' && portalId !== 'forest')
+      return null
+    return `key_${portalId}`
+  }
+
+  _getLockedChestPool() {
+    const pool = []
+    if (this.interactables)
+      pool.push(...this.interactables)
+    if (this._dungeonInteractables)
+      pool.push(...this._dungeonInteractables)
+    return pool
+  }
+
+  _findLockedChest(chestId) {
+    if (!chestId)
+      return null
+    return this._getLockedChestPool().find(i => i?.id === chestId && i.lockedChestId) || null
   }
 
   _getLockedChestPayload(chestId) {
-    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    const chest = this._findLockedChest(chestId)
     if (!chest)
       return null
     const state = this._lockedChests?.[chestId] || {}
@@ -1003,7 +1055,7 @@ export default class World {
   }
 
   _removeLockedChestLootVisual(chestId) {
-    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    const chest = this._findLockedChest(chestId)
     const visual = chest?._lootVisual
     if (!visual?.mesh)
       return
@@ -1013,7 +1065,7 @@ export default class World {
   }
 
   _ensureLockedChestLootVisual(chestId, withPop = false) {
-    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    const chest = this._findLockedChest(chestId)
     if (!chest)
       return
     const state = this._lockedChests?.[chestId] || {}
@@ -1039,7 +1091,8 @@ export default class World {
     const startY = (base?.y ?? (this._getSurfaceY(x, z) + 0.5)) + 0.6
     mesh.position.set(x, startY, z)
     mesh.rotation.y = Math.random() * Math.PI * 2
-    this._interactablesGroup?.add?.(mesh)
+    const group = chest.parentGroup || this._interactablesGroup || this._dungeonInteractablesGroup || null
+    group?.add?.(mesh)
 
     const now = this.experience.time.elapsed ?? 0
     chest._lootVisual = {
@@ -1121,7 +1174,7 @@ export default class World {
     if (!chestId || !keyId)
       return
 
-    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    const chest = this._findLockedChest(chestId)
     if (!chest || chest.read)
       return
 
@@ -1170,6 +1223,19 @@ export default class World {
     this._emitInventoryState()
     emitter.emit('dungeon:toast', { text: `已解锁：${chest.title}` })
     emitter.emit('chest:update', this._getLockedChestPayload(chestId))
+
+    emitter.emit('chest:close_ui', { id: chestId })
+
+    const autoLootItemId = lootItemId
+    const autoLootCount = lootCount
+    setTimeout(() => {
+      const st = this._lockedChests?.[chestId] || {}
+      if (!st.unlocked || st.looted)
+        return
+      if (!st.loot?.itemId || st.loot.itemId !== autoLootItemId)
+        return
+      this._takeLockedChestLoot({ id: chestId, itemId: autoLootItemId, amount: autoLootCount })
+    }, 900)
   }
 
   _takeLockedChestLoot(payload) {
@@ -1179,7 +1245,7 @@ export default class World {
     if (!chestId || !itemId)
       return
 
-    const chest = (this.interactables || []).find(i => i?.id === chestId && i.lockedChestId)
+    const chest = this._findLockedChest(chestId)
     if (!chest || chest.read)
       return
 
@@ -1922,40 +1988,44 @@ export default class World {
     const hub = { x: centerX, z: centerZ }
     const targetOffset = this.chunkManager.chunkWidth ?? 64
 
-    this.portals = [
+    this._dungeonPortals = [
+      {
+        id: 'forest',
+        name: '森林',
+        target: { x: hub.x, z: hub.z - targetOffset },
+        color: 0x69_FF_93,
+      },
       {
         id: 'plains',
         name: '平原',
-        anchor: { x: hub.x + 8, z: hub.z },
         target: { x: hub.x + targetOffset, z: hub.z },
         color: 0x5D_D2_FF,
       },
       {
         id: 'desert',
         name: '沙漠',
-        anchor: { x: hub.x - 8, z: hub.z },
         target: { x: hub.x - targetOffset, z: hub.z },
         color: 0xFF_D4_5D,
       },
       {
         id: 'snow',
         name: '雪原',
-        anchor: { x: hub.x, z: hub.z + 8 },
         target: { x: hub.x, z: hub.z + targetOffset },
         color: 0xD6_F6_FF,
       },
       {
-        id: 'forest',
-        name: '森林',
-        anchor: { x: hub.x, z: hub.z - 8 },
-        target: { x: hub.x, z: hub.z - targetOffset },
-        color: 0x69_FF_93,
-      },
-      {
         id: 'mine',
         name: '矿山',
-        anchor: { x: hub.x + 12, z: hub.z + 12 },
         target: { x: hub.x + targetOffset, z: hub.z + targetOffset },
+        color: 0x9D_AA_FF,
+      },
+    ]
+
+    this.portals = [
+      {
+        id: 'dungeon_selector',
+        name: '地牢入口',
+        anchor: { x: hub.x + 10, z: hub.z },
         color: 0x9D_AA_FF,
       },
     ]
@@ -2007,6 +2077,32 @@ export default class World {
     }
   }
 
+  _openDungeonSelect() {
+    if (this.currentWorld !== 'hub')
+      return
+    if (this.isPaused)
+      return
+
+    this.isPaused = true
+    this._emitDungeonState()
+    this.experience.pointerLock?.exitLock?.()
+    emitter.emit('portal:prompt_clear')
+    emitter.emit('interactable:prompt_clear')
+
+    const options = (this._dungeonPortals || []).map((p) => {
+      const saved = this._portalDungeonProgress?.[p.id] || {}
+      return {
+        id: p.id,
+        name: p.name,
+        completed: !!saved.completed,
+        read: saved.read ?? 0,
+        total: saved.total ?? 0,
+      }
+    })
+
+    emitter.emit('portal:select_open', { title: '选择地牢入口', options })
+  }
+
   _activatePortal(portal) {
     if (this.currentWorld !== 'hub')
       return
@@ -2026,6 +2122,7 @@ export default class World {
       this.isPaused = false
       this._emitDungeonState()
       emitter.emit('loading:hide')
+      this.experience.pointerLock?.requestLock?.()
     }, 700)
   }
 
@@ -2371,6 +2468,14 @@ export default class World {
     this._dungeonInteractablesGroup = new THREE.Group()
     this._dungeonGroup.add(this._dungeonInteractablesGroup)
 
+    const chestPortalIds = new Set(['plains', 'snow', 'desert', 'forest'])
+    const chestTitles = {
+      plains: '平原宝箱',
+      snow: '雪原宝箱',
+      desert: '沙漠宝箱',
+      forest: '森林宝箱',
+    }
+
     const itemConfigs = [
       {
         title: '裂纹石板',
@@ -2382,13 +2487,63 @@ export default class World {
       },
     ]
 
-    this._dungeonInteractables = positions.map((pos, index) => {
-      const config = itemConfigs[index % itemConfigs.length]
-      const id = `dungeon-${portalId}-${index}`
+    const list = []
+    const dungeonPositions = Array.isArray(positions) ? positions : []
+
+    let startIndex = 0
+    if (chestPortalIds.has(portalId)) {
+      const pos = dungeonPositions[0] || { x: 0, y: 0, z: 0 }
+      const chestId = `portal-chest-${portalId}`
+      const requiredKeyId = this._getRequiredKeyForPortalChest(portalId)
+      const state = this._lockedChests?.[chestId] || {}
+      const unlocked = !!state.unlocked
+      const looted = !!state.looted
+      list.push({
+        id: chestId,
+        title: chestTitles?.[portalId] || '宝箱',
+        description: requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : '需要钥匙解锁',
+        hint: looted ? '已开启' : (unlocked ? '按 E 打开宝箱' : '按 E 解锁宝箱'),
+        lockedChestId: chestId,
+        requiredKeyId,
+        unlocked,
+        looted,
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+      })
+      startIndex = 1
+    }
+
+    for (let i = startIndex; i < dungeonPositions.length; i++) {
+      const pos = dungeonPositions[i]
+      const config = itemConfigs[(i - startIndex) % itemConfigs.length]
+      list.push({
+        id: `dungeon-${portalId}-${i - startIndex}`,
+        title: config.title,
+        description: config.description,
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+      })
+    }
+
+    this._dungeonInteractables = list.map((item) => {
+      if (item.lockedChestId && item.looted) {
+        return {
+          ...item,
+          mesh: null,
+          outline: null,
+          hitRadius: 0,
+          range: 0,
+          read: true,
+          spinSpeed: 0,
+          parentGroup: this._dungeonInteractablesGroup,
+        }
+      }
 
       let mesh
       const resource = this.resources.items.chest_closed
-      if (resource) {
+      if (resource?.scene) {
         mesh = resource.scene.clone()
         mesh.scale.set(0.5, 0.5, 0.5)
       }
@@ -2398,24 +2553,45 @@ export default class World {
         mesh = new THREE.Mesh(geometry, material)
       }
 
-      mesh.position.set(pos.x, pos.y + 0.5, pos.z)
-
+      mesh.position.set(item.x, (item.y ?? 0) + 0.5, item.z)
       this._dungeonInteractablesGroup.add(mesh)
 
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
+      const outlineSize = Math.max(1.08, hitRadius * 2 * 1.08)
+      const outline = new THREE.Mesh(
+        new THREE.BoxGeometry(outlineSize, outlineSize, outlineSize),
+        new THREE.MeshBasicMaterial({
+          color: 0xFF_FF_FF,
+          transparent: true,
+          opacity: 0.9,
+          wireframe: true,
+          depthWrite: false,
+        }),
+      )
+      outline.visible = false
+      outline.position.copy(mesh.position)
+      this._dungeonInteractablesGroup.add(outline)
 
-      return {
-        id,
-        title: config.title,
-        description: config.description,
-        x: pos.x,
-        z: pos.z,
+      const range = item.looted ? 0 : (item.lockedChestId ? 3.0 : 2.6)
+
+      const resolved = {
+        ...item,
         mesh,
+        outline,
         hitRadius,
-        range: 2.6,
-        read: false,
+        range,
+        read: !!item.looted,
+        spinSpeed: item.lockedChestId ? 0 : 0.01,
+        parentGroup: this._dungeonInteractablesGroup,
       }
+      return resolved
     })
+
+    for (const item of this._dungeonInteractables) {
+      if (!item?.lockedChestId)
+        continue
+      this._ensureLockedChestLootVisual(item.id, false)
+    }
   }
 
   _updateDungeonInteractables() {
@@ -2498,47 +2674,10 @@ export default class World {
       },
     ]
 
-    const chestTitleByKey = {
-      key_plains: '平原宝箱',
-      key_snow: '雪原宝箱',
-      key_desert: '沙漠宝箱',
-      key_forest: '森林宝箱',
-    }
-
-    const portalChestItems = (this.portals || [])
-      .filter(p => p?.id && p.id !== 'mine')
-      .map((portal) => {
-        const requiredKeyId = this._getRequiredKeyForPortalChest(portal.id)
-        const chestId = `portal-chest-${portal.id}`
-        const state = this._lockedChests?.[chestId] || {}
-        const ox = Math.sign((portal.anchor?.x ?? 0) - centerX) || 1
-        const oz = Math.sign((portal.anchor?.z ?? 0) - centerZ) || 1
-        const x = (portal.anchor?.x ?? 0) + ox * 2
-        const z = (portal.anchor?.z ?? 0) + oz * 2
-        const unlocked = !!state.unlocked
-        const looted = !!state.looted
-        return {
-          id: chestId,
-          title: chestTitleByKey?.[requiredKeyId] || `${portal.name}宝箱`,
-          description: requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : '需要钥匙解锁',
-          x,
-          z,
-          hint: looted ? '已开启' : (unlocked ? '按 E 打开宝箱' : '按 E 解锁宝箱'),
-          lockedChestId: chestId,
-          requiredKeyId,
-          unlocked,
-          looted,
-        }
-      })
-
-    this.interactables = [...items, ...portalChestItems].map((item) => {
+    this.interactables = [...items].map((item) => {
       let mesh
       if (item.id === 'warehouse' && this.resources.items.chest_open) {
         mesh = this.resources.items.chest_open.scene.clone()
-        mesh.scale.set(0.5, 0.5, 0.5)
-      }
-      else if (item.lockedChestId && this.resources.items.chest_closed) {
-        mesh = this.resources.items.chest_closed.scene.clone()
         mesh.scale.set(0.5, 0.5, 0.5)
       }
       else if (this.resources.items.chest_closed) {
@@ -2596,12 +2735,6 @@ export default class World {
         spinSpeed: (item.id === 'warehouse' || item.lockedChestId) ? 0 : 0.01,
       }
     })
-
-    for (const item of this.interactables) {
-      if (!item?.lockedChestId)
-        continue
-      this._ensureLockedChestLootVisual(item.id, false)
-    }
   }
 
   _initHubAutomation() {
@@ -3350,12 +3483,7 @@ export default class World {
       if (this._activePortalId !== best.id) {
         this._activePortalId = best.id
         this._activePortal = best
-        const saved = this._portalDungeonProgress?.[best.id]
-        const total = saved?.total ?? 0
-        const read = saved?.read ?? 0
-        const progressText = total > 0 ? ` · ${read}/${total}` : ''
-        const suffix = saved?.completed ? ' · 已完成' : ''
-        emitter.emit('portal:prompt', { title: best.name, hint: `按 E 传送${suffix}${progressText}` })
+        emitter.emit('portal:prompt', { title: best.name, hint: '按 E 选择地牢' })
       }
     }
     else if (this._activePortalId !== null) {
@@ -3444,6 +3572,13 @@ export default class World {
       this._updateDungeonExit()
       this._updateLockOn()
       this._updateDungeonEnemies()
+      if (this._dungeonInteractables && this._dungeonInteractables.length) {
+        for (const item of this._dungeonInteractables) {
+          if (!item?.lockedChestId)
+            continue
+          this._updateLockedChestLootVisual(item, dt, t)
+        }
+      }
       this._resolvePlayerEnemyCollisions()
       this._resolvePlayerDungeonObjectCollisions()
     }
@@ -3673,6 +3808,10 @@ export default class World {
       emitter.off('chest:use_key', this._onChestUseKey)
     if (this._onChestTakeItem)
       emitter.off('chest:take', this._onChestTakeItem)
+    if (this._onPortalSelect)
+      emitter.off('portal:select', this._onPortalSelect)
+    if (this._onPortalSelectClose)
+      emitter.off('portal:select_close', this._onPortalSelectClose)
     if (this._onPunchStraight)
       emitter.off('input:punch_straight', this._onPunchStraight)
     if (this._onPunchHook)

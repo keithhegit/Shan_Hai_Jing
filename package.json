@@ -24,6 +24,7 @@
     "test:safari": "npx playwright test --headed --project=webkit",
     "lint": "eslint",
     "lint:fix": "eslint --fix",
+    "typecheck": "tsc -p tsconfig.json",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"

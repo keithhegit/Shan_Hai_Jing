@@ -110,6 +110,15 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - Hub：传送门改为单入口 + 菜单选择目的地
 - 地牢：奖励宝箱迁移进各地牢，上锁宝箱解锁后支持战利品弹出与场景拾取
 
+### 2.1.2 待修复与行动计划（来自 2026-01-18 反馈）
+- 主控模型：恢复 `public/models/character/Character_Male_1.gltf` 为 `playerModel`（入口：`src/js/sources.js`、`src/js/world/player/player.js`）
+- 物质枪外观：将装备模型替换为 `public/models/Tools/heart.glb`（复用 `material_gun` 资源 key）
+- 物质枪挂点：装备后将心形渲染在主控左上举高位置，并将射线起点改为该位置（入口：`src/js/world/player/player.js`、`src/js/world/world.js`）
+- 物质枪射线：将当前线段渲染升级为“可见直径”的光束（入口：`src/js/world/world.js`）
+- 宝箱位置：森林/平原/雪原/沙漠宝箱仅在对应地牢出现，不在 Hub 出现（入口：`src/js/world/world.js`）
+- 宝箱交互：钥匙激活成功后“随机道具弹出”，随后该宝箱消失（入口：`src/js/world/world.js`）
+- 地牢入口：Hub 仅保留一个入口交互点，并通过 Modal 菜单提供 5 个目的地（森林/平原/雪原/沙漠/矿山）（入口：`src/App.vue`、`src/js/world/world.js`、`src/components/StoryModal.vue` 或同类 Modal 组件）
+
 ### 2.2 部分完成（存在入口/占位，但不完整）
 - 战斗锁定（Lock-on）：支持“中键锁定最近敌人 / 再按解除”，并推送 UI 提示事件；锁定视觉已具备基础反馈（目标脚下红色圆环、红色高亮倾向、锁定暗角、锁定时显示目标血条）；但“战斗判定/伤害/受击/死亡/重生”仍未形成完整闭环（以现状为准）
 - 敌人：地牢内可生成敌人实体并播放基础移动动画，但战斗交互未闭环（无攻击/受击/死亡/重生闭环）

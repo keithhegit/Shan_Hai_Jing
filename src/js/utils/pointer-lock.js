@@ -92,7 +92,7 @@ export default class PointerLockManager {
    * Pointer Lock 错误回调
    */
   onPointerLockError() {
-    console.error('[PointerLock] 无法锁定鼠标，可能是权限问题')
+    console.warn('[PointerLock] 无法锁定鼠标，可能是权限问题')
   }
 
   /**

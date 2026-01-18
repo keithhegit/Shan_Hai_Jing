@@ -359,7 +359,7 @@ export default class Player {
       const box = new THREE.Box3().setFromObject(gun)
       box.getSize(gunSize)
       const maxDim = Math.max(gunSize.x, gunSize.y, gunSize.z)
-      const targetMax = 0.55
+      const targetMax = 0.38
       const scalar = Number.isFinite(maxDim) && maxDim > 0.0001
         ? THREE.MathUtils.clamp(targetMax / maxDim, 0.05, 2.5)
         : 0.5
@@ -380,27 +380,31 @@ export default class Player {
 
     const hold = new THREE.Group()
     hold.add(gun)
-    hold.rotation.set(0, Math.PI / 2, 0)
-    hold.position.set(0.03, 0.015, 0.085)
+    hold.rotation.set(0, 0, 0)
 
-    const hand = this._findHandBone() || this.model
-    hand.add(hold)
+    const camera = this.experience.camera?.instance || null
+    if (camera) {
+      hold.position.set(-0.38, 0.26, -0.78)
+      hold.rotation.set(0.1, Math.PI, 0)
+      camera.add(hold)
+    }
+    else {
+      hold.rotation.set(0, Math.PI / 2, 0)
+      hold.position.set(0.03, 0.015, 0.085)
+      const hand = this._findHandBone() || this.model
+      hand.add(hold)
+    }
 
     const muzzle = new THREE.Object3D()
     if (gunBox) {
-      const size = new THREE.Vector3()
-      gunBox.getSize(size)
-      const axis = size.x >= size.y && size.x >= size.z
-        ? 'x'
-        : (size.z >= size.y ? 'z' : 'y')
       const center = new THREE.Vector3()
       gunBox.getCenter(center)
       const muzzlePos = center.clone()
-      muzzlePos[axis] = gunBox.max[axis]
+      muzzlePos.z = gunBox.min.z
       muzzle.position.copy(muzzlePos)
     }
     else {
-      muzzle.position.set((gunSize.x || 0.25) * 0.55, (gunSize.y || 0.25) * 0.1, 0)
+      muzzle.position.set(0, 0, -(gunSize.z || 0.25) * 0.55)
     }
     hold.add(muzzle)
 

@@ -30,7 +30,7 @@ export default [
   {
     name: 'playerModel',
     type: 'gltfModel',
-    path: 'models/character/character-male-f.glb',
+    path: 'models/character/Character_Male_1.gltf',
   },
   // ===== Enemies =====
   { name: 'enemy_demon', type: 'gltfModel', path: 'models/Enemies/Demon.gltf', animations: ['Attack', 'Death', 'HitRecieve', 'Idle', 'Jump', 'Run', 'Walk'] },
@@ -46,7 +46,7 @@ export default [
   { name: 'chest_closed', type: 'gltfModel', path: 'models/Environment/Chest_Closed.gltf' },
   { name: 'chest_open', type: 'gltfModel', path: 'models/Environment/Chest_Open.gltf' },
   { name: 'key', type: 'gltfModel', path: 'models/Environment/Key.gltf' },
-  { name: 'material_gun', type: 'gltfModel', path: 'models/Environment/Rock1.gltf' },
+  { name: 'material_gun', type: 'gltfModel', path: 'models/Tools/heart.glb' },
   { name: 'crystal_big', type: 'gltfModel', path: 'models/Environment/Crystal_Big.gltf' },
   { name: 'crystal_small', type: 'gltfModel', path: 'models/Environment/Crystal_Small.gltf' },
   // ===== Animals =====

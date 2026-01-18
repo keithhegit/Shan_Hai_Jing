@@ -53,6 +53,28 @@ export default class BlockDungeonGenerator {
     const exitX = startX + dir.x * (endRoom.l + endRoom.length / 2) + (-dir.z * endRoom.w)
     const exitZ = startZ + dir.z * (endRoom.l + endRoom.length / 2) + (dir.x * endRoom.w)
 
+    const chestTypes = new Set(['plains', 'snow', 'desert', 'forest'])
+    const perpX = -dir.z
+    const perpZ = dir.x
+    const toWorld = (forward, right) => {
+      return {
+        x: startX + Math.floor(dir.x * forward + perpX * right),
+        z: startZ + Math.floor(dir.z * forward + perpZ * right),
+      }
+    }
+
+    const startRoom = layout.rooms[0]
+    const mainRoom = layout.rooms.find(r => r.type === 'main') || layout.rooms[1]
+    const startCenter = toWorld(startRoom.l, startRoom.w)
+    const mainCenter = toWorld(mainRoom.l, mainRoom.w)
+    const endCenter = toWorld(endRoom.l, endRoom.w)
+
+    if (chestTypes.has(type)) {
+      interactables.push({ x: endCenter.x, y: surfaceY, z: endCenter.z })
+    }
+    interactables.push({ x: mainCenter.x + perpX * 2, y: surfaceY, z: mainCenter.z + perpZ * 2 })
+    interactables.push({ x: startCenter.x - perpX * 2, y: surfaceY, z: startCenter.z - perpZ * 2 })
+
     return {
       surfaceY,
       spawn: { x: spawnX, y: surfaceY + 0.1, z: spawnZ },
