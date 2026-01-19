@@ -296,3 +296,114 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
+
+test('dungeon: layout has 4 fight rooms with branching/loop and themed boss', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._blockDungeonGenerator), { timeout: 60_000 })
+
+  const result = await page.evaluate(() => {
+    const gen = window.Experience.world._blockDungeonGenerator
+    const layout = gen._createLayout('plains')
+    const roomTypes = layout?.rooms?.map(r => r.type) ?? []
+    const corridors = layout?.corridors ?? []
+    const hasRightAxis = corridors.some(c => c.axis === 'right')
+    return {
+      rooms: layout?.rooms?.length ?? 0,
+      roomTypes,
+      corridorCount: corridors.length,
+      hasRightAxis,
+    }
+  })
+
+  expect(result.rooms).toBe(6)
+  for (const t of ['start', 'fight1', 'fight2', 'fight3', 'fight4', 'extraction'])
+    expect(result.roomTypes).toContain(t)
+  expect(result.corridorCount).toBeGreaterThanOrEqual(7)
+  expect(result.hasRightAxis).toBe(true)
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'plains') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonEnemies?.length), { timeout: 20_000 })
+
+  const boss = await page.evaluate(() => {
+    const world = window.Experience.world
+    const enemies = world._dungeonEnemies || []
+    const b = enemies.find(e => e?.isBoss) || null
+    return b ? { isBoss: true, type: b._resourceKey || b._typeLabel || b.type || null, maxHp: b.maxHp, hp: b.hp } : null
+  })
+
+  expect(boss).not.toBeNull()
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: each portal spawns themed enemies and boss', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._blockDungeonGenerator), { timeout: 60_000 })
+
+  const expectations = {
+    plains: 'giant',
+    snow: 'yeti2',
+    desert: 'dino',
+    forest: 'mushroomking',
+    mine: 'skeleton_armor',
+  }
+
+  const snapshot = await page.evaluate(() => {
+    const gen = window.Experience.world._blockDungeonGenerator
+    const result = {}
+    for (const id of ['plains', 'snow', 'desert', 'forest', 'mine']) {
+      const p1 = gen._getEnemyPool(id, 1)
+      const p4 = gen._getEnemyPool(id, 4)
+      result[id] = {
+        stage1: Array.isArray(p1?.adds) ? p1.adds : [],
+        boss: p4?.boss ?? null,
+        stage4Adds: Array.isArray(p4?.adds) ? p4.adds : [],
+      }
+    }
+    return result
+  })
+
+  for (const [id, boss] of Object.entries(expectations)) {
+    expect(snapshot[id]?.boss).toBe(boss)
+    expect((snapshot[id]?.stage1 || []).length).toBeGreaterThan(0)
+    expect((snapshot[id]?.stage4Adds || []).length).toBeGreaterThan(0)
+  }
+
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})

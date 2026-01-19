@@ -73,6 +73,8 @@ export default class Player {
     this._matterGunMuzzle = null
     this._isMatterGunAiming = false
     this._wantsMatterGunEquipped = false
+    this._controlLocked = false
+    this._sprintDisabled = false
 
     this.setupInputListeners()
     emitter.emit('ui:update_stats', { hp: this.hp, maxHp: this.maxHp, stamina: this.stamina })
@@ -554,7 +556,19 @@ export default class Player {
     const isCombat = this.animation.stateMachine.currentState?.name === AnimationStates.COMBAT && !isBlockingAction
 
     // Resolve Input (Conflict & Normalize)
-    const { resolvedInput, weights } = resolveDirectionInput(this.inputState)
+    const { resolvedInput: rawResolvedInput, weights } = resolveDirectionInput(this.inputState)
+    const resolvedInput = { ...rawResolvedInput }
+    if (this._sprintDisabled)
+      resolvedInput.shift = false
+    if (this._controlLocked) {
+      resolvedInput.forward = false
+      resolvedInput.backward = false
+      resolvedInput.left = false
+      resolvedInput.right = false
+      resolvedInput.shift = false
+      resolvedInput.v = false
+      resolvedInput.space = false
+    }
 
     // 恢复体力
     if (!this.inputState.shift && !this.inputState.space && this.stamina < this.maxStamina) {
@@ -812,6 +826,7 @@ export default class Player {
     this._invulnerableUntil = now + 480
     this.hp = Math.max(0, this.hp - (dmg ?? 1))
     emitter.emit('ui:update_stats', { hp: this.hp })
+    emitter.emit('combat:player_damaged', { amount: dmg ?? 1, hp: this.hp, maxHp: this.maxHp })
 
     if (this.hp <= 0) {
       this.die()
@@ -877,5 +892,20 @@ export default class Player {
       emitter.off('game:respawn', this._onRespawn)
     this._unequipMatterGun()
     this.movement?.group?.removeFromParent?.()
+  }
+
+  setControlLocked(locked) {
+    this._controlLocked = !!locked
+    if (this._controlLocked) {
+      this.movement?.worldVelocity?.set?.(0, this.movement.worldVelocity.y, 0)
+    }
+  }
+
+  setSprintDisabled(disabled) {
+    this._sprintDisabled = !!disabled
+  }
+
+  setSpeedMultiplier(multiplier) {
+    this.movement?.setSpeedMultiplier?.(multiplier)
   }
 }

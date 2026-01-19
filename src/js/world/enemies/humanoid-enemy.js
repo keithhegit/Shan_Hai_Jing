@@ -22,6 +22,7 @@ export default class HumanoidEnemy {
     this.hp = hp
     this.isDead = false
     this.isLocked = false
+    this.type = String(type || 'skeleton').toLowerCase()
     this._baseScale = scale
     this._destroyTimer = null
     this.hitRadius = 0.9
@@ -37,6 +38,7 @@ export default class HumanoidEnemy {
     this._attackRange = 2.1
     this._attackWindupMs = 260
     this._lockHighlightRestore = null
+    this._stunnedUntil = 0
 
     this.group = new THREE.Group()
     this.group.position.copy(position)
@@ -514,11 +516,17 @@ export default class HumanoidEnemy {
     if (this.isDead)
       return false
 
+    const now = this.time?.elapsed ?? 0
     this.hp = Math.max(0, this.hp - amount)
     this._updateHpBar()
     if (this.hp <= 0) {
       this.die()
       return true
+    }
+
+    const ratio = this.maxHp > 0 ? (this.hp / this.maxHp) : 0
+    if (ratio > 0 && ratio <= 0.15) {
+      this._stunnedUntil = Math.max(this._stunnedUntil, now + 1200)
     }
 
     const hitClip = this._findActionByExact(['HitRecieve', 'HitReceive'])
@@ -535,6 +543,23 @@ export default class HumanoidEnemy {
       }, 80)
     }
 
+    return true
+  }
+
+  isStunned(now = null) {
+    const t = now ?? (this.time?.elapsed ?? 0)
+    return t < (this._stunnedUntil ?? 0)
+  }
+
+  heal(amount = 1) {
+    if (this.isDead)
+      return false
+    const delta = Math.max(0, Number(amount) || 0)
+    if (delta <= 0)
+      return false
+    const max = Math.max(1, Number(this.maxHp) || 1)
+    this.hp = Math.min(max, this.hp + delta)
+    this._updateHpBar()
     return true
   }
 

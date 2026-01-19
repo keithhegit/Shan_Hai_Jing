@@ -22,6 +22,7 @@ export default class InputManager {
       e: false,
       r: false,
       f: false,
+      g: false,
       b: false,
       h: false,
     }
@@ -151,7 +152,10 @@ export default class InputManager {
         break
       case 'q':
         if (isPressed && !this.keys.q) {
-          emitter.emit('input:toggle_block_edit_mode')
+          emitter.emit('input:capture', { pressed: true })
+        }
+        else if (!isPressed && this.keys.q) {
+          emitter.emit('input:capture', { pressed: false })
         }
         this.keys.q = isPressed
         break
@@ -172,6 +176,12 @@ export default class InputManager {
           emitter.emit('input:grab_pet')
         }
         this.keys.f = isPressed
+        break
+      case 'g':
+        if (isPressed && !this.keys.g) {
+          emitter.emit('input:toggle_block_edit_mode')
+        }
+        this.keys.g = isPressed
         break
       case 'b':
         if (isPressed && !this.keys.b) {

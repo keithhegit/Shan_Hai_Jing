@@ -5,6 +5,50 @@ export default class BlockDungeonGenerator {
     this.chunkManager = chunkManager
   }
 
+  _getEnemyPool(dungeonType, stage) {
+    const type = String(dungeonType || '').toLowerCase()
+    const s = Math.max(1, Math.min(4, Math.floor(Number(stage) || 1)))
+
+    const tables = {
+      plains: {
+        1: ['tribal'],
+        2: ['orc'],
+        3: ['tribal', 'orc'],
+        4: { boss: 'giant', adds: ['orc'] },
+      },
+      snow: {
+        1: ['yeti'],
+        2: ['yeti'],
+        3: ['yeti2'],
+        4: { boss: 'yeti2', adds: ['yeti2'] },
+      },
+      desert: {
+        1: ['cactoro'],
+        2: ['dino'],
+        3: ['cactoro', 'dino'],
+        4: { boss: 'dino', adds: ['dino'] },
+      },
+      forest: {
+        1: ['frog'],
+        2: ['monkroose'],
+        3: ['ninja', 'monkroose'],
+        4: { boss: 'mushroomking', adds: ['ninja'] },
+      },
+      mine: {
+        1: ['skeleton'],
+        2: ['orc_skull'],
+        3: ['skeleton_armor'],
+        4: { boss: 'skeleton_armor', adds: ['orc_skull'] },
+      },
+    }
+
+    const table = tables[type] || tables.plains
+    const entry = table[s]
+    if (s === 4 && entry && typeof entry === 'object' && !Array.isArray(entry))
+      return entry
+    return { adds: Array.isArray(entry) ? entry : ['skeleton'] }
+  }
+
   generate(originX, originZ, type) {
     const style = this._getStyle(type)
     const dir = this._getDirection(type)
@@ -64,7 +108,7 @@ export default class BlockDungeonGenerator {
     }
 
     const startRoom = layout.rooms[0]
-    const mainRoom = layout.rooms.find(r => r.type === 'main') || layout.rooms[1]
+    const mainRoom = layout.rooms.find(r => r.type === 'fight4' || r.type === 'main') || layout.rooms[1]
     const startCenter = toWorld(startRoom.l, startRoom.w)
     const mainCenter = toWorld(mainRoom.l, mainRoom.w)
     const endCenter = toWorld(endRoom.l, endRoom.w)
@@ -79,6 +123,7 @@ export default class BlockDungeonGenerator {
       surfaceY,
       spawn: { x: spawnX, y: surfaceY + 0.1, z: spawnZ },
       exit: { x: exitX, y: surfaceY, z: exitZ },
+      layout,
       enemies: enemyPositions,
       interactables,
       reward,
@@ -145,19 +190,36 @@ export default class BlockDungeonGenerator {
 
     let reward = null
 
-    // Add enemies and loot in center
-    if (room.type === 'main' && dungeonType !== 'mine') {
+    // Add enemies and loot in fight rooms
+    const roomType = String(room.type || '')
+    const match = roomType.match(/^fight(\d)$/)
+    const stage = match ? Math.max(1, Math.min(4, Number(match[1]) || 1)) : null
+    if (stage) {
       const cx = startX + dir.x * l + (-dir.z * w)
       const cz = startZ + dir.z * l + (dir.x * w)
-      enemies.push({ x: cx + 2, y: floorBlockY + 0.5, z: cz + 2, isBoss: true })
-      reward = { x: cx, y: floorBlockY + 0.5, z: cz }
+      const isBoss = stage === 4
+      const count = isBoss ? Math.max(5, 2 + stage) : stage
+      const pool = this._getEnemyPool(dungeonType, stage)
+      const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+      const bossType = pool?.boss || adds[0] || 'skeleton'
+      for (let i = 0; i < count; i++) {
+        const dx = i === 0 ? 0 : (i % 2 === 0 ? 1 : -1) * (1 + Math.floor(i / 2))
+        const dz = i === 0 ? 0 : ((i % 3) - 1)
+        const spawnIsBoss = isBoss && i === 0
+        const spawnType = spawnIsBoss ? bossType : adds[i % adds.length]
+        const hp = spawnIsBoss ? (10 + stage * 2) : (3 + stage)
+        const scale = spawnIsBoss ? 1.2 : 1
+        enemies.push({ x: cx + dx, y: floorBlockY + 0.5, z: cz + dz, isBoss: spawnIsBoss, stage, type: spawnType, hp, scale })
+      }
+      if (isBoss)
+        reward = { x: cx, y: floorBlockY + 0.5, z: cz }
     }
 
     return { reward }
   }
 
   _buildCorridor(startX, startZ, floorBlockY, dir, corridor, style) {
-    const { l, w, width, length, height } = corridor
+    const { l, w, width, length, height, axis = 'forward' } = corridor
 
     // Corridors are aligned with direction
     const halfL = Math.floor(length / 2)
@@ -169,8 +231,10 @@ export default class BlockDungeonGenerator {
           const perpX = -dir.z
           const perpZ = dir.x
 
-          const forward = l + dl
-          const right = w + dw
+          const u = dl
+          const v = dw
+          const forward = axis === 'right' ? (l + v) : (l + u)
+          const right = axis === 'right' ? (w + u) : (w + v)
 
           const x = startX + Math.floor(dir.x * forward + perpX * right)
           const z = startZ + Math.floor(dir.z * forward + perpZ * right)
@@ -205,18 +269,34 @@ export default class BlockDungeonGenerator {
   }
 
   _createLayout(_type) {
-    // Simple 3-room layout
-    // Room 1 (Start) -> Corridor -> Room 2 (Main) -> Corridor -> Room 3 (End)
+    const r1 = { l: 5, w: 0, width: 9, length: 9, height: 5, type: 'start' }
 
-    const r1 = { l: 5, w: 0, width: 9, length: 9, height: 6, type: 'start' }
-    const c1 = { l: 14, w: 0, width: 3, length: 10, height: 5 }
-    const r2 = { l: 24, w: 0, width: 15, length: 15, height: 8, type: 'main' } // Big room
-    const c2 = { l: 36, w: 0, width: 3, length: 10, height: 5 }
-    const r3 = { l: 45, w: 0, width: 9, length: 9, height: 6, type: 'end' }
+    const f1 = { l: 22, w: 0, width: 11, length: 11, height: 6, type: 'fight1' }
+    const f2 = { l: 38, w: 7, width: 9, length: 9, height: 6, type: 'fight2' }
+    const f3 = { l: 38, w: -7, width: 9, length: 9, height: 6, type: 'fight3' }
+    const f4 = { l: 54, w: 0, width: 13, length: 13, height: 7, type: 'fight4' }
+
+    const ex = { l: 70, w: 0, width: 9, length: 9, height: 5, type: 'extraction' }
+
+    const corridors = [
+      { l: 14, w: 0, width: 3, length: 12, height: 5, axis: 'forward' }, // start -> fight1
+      { l: 30, w: 0, width: 3, length: 12, height: 5, axis: 'forward' }, // fight1 -> branch junction
+
+      { l: 38, w: 3.5, width: 3, length: 9, height: 5, axis: 'right' }, // junction -> fight2
+      { l: 38, w: -3.5, width: 3, length: 9, height: 5, axis: 'right' }, // junction -> fight3
+      { l: 38, w: 0, width: 3, length: 17, height: 5, axis: 'right' }, // fight2 <-> fight3 loop
+
+      { l: 46, w: 7, width: 3, length: 12, height: 5, axis: 'forward' }, // fight2 -> fight4 approach
+      { l: 46, w: -7, width: 3, length: 12, height: 5, axis: 'forward' }, // fight3 -> fight4 approach
+      { l: 54, w: 3.5, width: 3, length: 9, height: 5, axis: 'right' }, // fight2 lane -> fight4
+      { l: 54, w: -3.5, width: 3, length: 9, height: 5, axis: 'right' }, // fight3 lane -> fight4
+
+      { l: 62, w: 0, width: 3, length: 12, height: 5, axis: 'forward' }, // fight4 -> extraction
+    ]
 
     return {
-      rooms: [r1, r2, r3],
-      corridors: [c1, c2],
+      rooms: [r1, f1, f2, f3, f4, ex],
+      corridors,
     }
   }
 

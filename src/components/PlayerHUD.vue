@@ -1,31 +1,11 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import emitter from '../js/utils/event-bus.js'
 
-const maxHearts = ref(5)
-const currentHearts = ref(5)
 const staminaPercent = ref(100)
 const inventorySummary = ref({ backpackTotal: 0, warehouseTotal: 0, carriedPet: '' })
 
-const hpRatio = computed(() => {
-  const max = Math.max(1, Number(maxHearts.value) || 1)
-  const cur = Math.max(0, Math.min(max, Number(currentHearts.value) || 0))
-  return cur / max
-})
-
-const heartChar = computed(() => {
-  if (hpRatio.value <= 0.25)
-    return '💛'
-  if (hpRatio.value <= 0.5)
-    return '🧡'
-  return '❤️'
-})
-
 function updateStats(stats) {
-  if (stats.hp !== undefined)
-    currentHearts.value = stats.hp
-  if (stats.maxHp !== undefined)
-    maxHearts.value = stats.maxHp
   if (stats.stamina !== undefined)
     staminaPercent.value = stats.stamina
 }
@@ -47,18 +27,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="player-hud">
-    <!-- 血条 (红心) -->
-    <div class="hearts-container">
-      <div
-        v-for="i in maxHearts"
-        :key="i"
-        class="heart"
-        :class="{ lost: i > currentHearts }"
-      >
-        {{ i > currentHearts ? '🖤' : heartChar }}
-      </div>
-    </div>
-
     <!-- 体力条 (黄色进度条) -->
     <div class="stamina-bar-bg">
       <div class="stamina-bar-fill" :style="{ width: `${staminaPercent}%` }" />
@@ -91,22 +59,6 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   pointer-events: none;
-}
-
-.hearts-container {
-  display: flex;
-  gap: 4px;
-}
-
-.heart {
-  font-size: 24px;
-  filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5));
-  transition: all 0.3s;
-}
-
-.heart.lost {
-  filter: grayscale(1) brightness(0.5) opacity(0.5);
-  transform: scale(0.8);
 }
 
 .stamina-bar-bg {

@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref, toRaw } from 'vue'
 import Crosshair from './components/Crosshair.vue'
 import GameCTA from './components/GameCTA.vue'
 import MiniMap from './components/MiniMap.vue'
@@ -20,6 +20,11 @@ let dungeonToastTimer = null
 const lockState = ref(null)
 const inventoryPanel = ref(null)
 const inventoryData = ref({ panel: null, backpack: {}, warehouse: {} })
+const backpackGrid = ref(null)
+const gridState = ref(null)
+const gridDrag = ref(null)
+const gridHover = ref(null)
+const gridCellPx = 42
 const chestModal = ref(null)
 const portalSelectModal = ref(null)
 
@@ -171,6 +176,11 @@ function onInventoryUpdate(payload) {
   inventoryData.value = payload || { panel: inventoryPanel.value, backpack: {}, warehouse: {} }
   if (payload?.panel)
     inventoryPanel.value = payload.panel
+  backpackGrid.value = payload?.backpackGrid || null
+  if (!gridDrag.value) {
+    const rawGrid = backpackGrid.value ? toRaw(backpackGrid.value) : null
+    gridState.value = rawGrid ? structuredClone(rawGrid) : null
+  }
 }
 
 function closeInventoryPanel() {
@@ -203,6 +213,12 @@ function itemLabel(id) {
     return 'Fence'
   if (id === 'material_gun')
     return '物质枪'
+  if (id === 'canister_small')
+    return '收容罐（小）'
+  if (id === 'canister_medium')
+    return '收容罐（中）'
+  if (id === 'canister_large')
+    return '收容罐（大）'
   if (id === 'key_plains')
     return '平原钥匙'
   if (id === 'key_snow')
@@ -242,8 +258,129 @@ function onKeyDown(event) {
     closeInventoryPanel()
     return
   }
+  if (inventoryPanel.value && key === 'r' && gridDrag.value) {
+    rotateDraggedGridItem()
+    return
+  }
   if (key === 'escape' || (key === 'e' && interactableModal.value))
     closeInteractableModal()
+}
+
+function gridRecomputeCells(grid) {
+  if (!grid)
+    return
+  const rows = Math.max(1, Math.floor(Number(grid.rows) || 6))
+  const cols = Math.max(1, Math.floor(Number(grid.cols) || 8))
+  const cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => null))
+  for (const item of grid.items || []) {
+    if (item.x < 0 || item.y < 0)
+      continue
+    for (let y = item.y; y < item.y + item.h; y++) {
+      for (let x = item.x; x < item.x + item.w; x++) {
+        if (y >= 0 && y < rows && x >= 0 && x < cols)
+          cells[y][x] = item.uid
+      }
+    }
+  }
+  grid.cells = cells
+}
+
+function gridFindItem(uid) {
+  const grid = gridState.value
+  if (!grid)
+    return null
+  return (grid.items || []).find(i => i.uid === uid) || null
+}
+
+function gridCanFit(uid, x, y, w, h) {
+  const grid = gridState.value
+  if (!grid)
+    return false
+  const rows = grid.rows
+  const cols = grid.cols
+  if (x < 0 || y < 0 || x + w > cols || y + h > rows)
+    return false
+  for (let yy = y; yy < y + h; yy++) {
+    for (let xx = x; xx < x + w; xx++) {
+      const v = grid.cells?.[yy]?.[xx] ?? null
+      if (v && v !== uid)
+        return false
+    }
+  }
+  return true
+}
+
+function gridPointerToCell(event) {
+  const el = event.currentTarget
+  if (!el)
+    return null
+  const rect = el.getBoundingClientRect()
+  const x = Math.floor((event.clientX - rect.left) / gridCellPx)
+  const y = Math.floor((event.clientY - rect.top) / gridCellPx)
+  return { x, y }
+}
+
+function onGridItemPointerDown(event, uid) {
+  if (!gridState.value)
+    return
+  const item = gridFindItem(uid)
+  if (!item)
+    return
+  gridDrag.value = {
+    uid,
+    startX: item.x,
+    startY: item.y,
+    w: item.w,
+    h: item.h,
+    rotated: !!item.rotated,
+  }
+  gridHover.value = null
+  event.stopPropagation()
+  event.preventDefault()
+}
+
+function onGridPointerMove(event) {
+  const drag = gridDrag.value
+  const grid = gridState.value
+  if (!drag || !grid)
+    return
+  const cell = gridPointerToCell(event)
+  if (!cell)
+    return
+  const canFit = gridCanFit(drag.uid, cell.x, cell.y, drag.w, drag.h)
+  gridHover.value = { x: cell.x, y: cell.y, w: drag.w, h: drag.h, canFit }
+}
+
+function onGridPointerUp(event) {
+  const drag = gridDrag.value
+  const grid = gridState.value
+  if (!drag || !grid)
+    return
+  const cell = gridPointerToCell(event)
+  if (cell && gridCanFit(drag.uid, cell.x, cell.y, drag.w, drag.h)) {
+    const item = gridFindItem(drag.uid)
+    if (item) {
+      item.x = cell.x
+      item.y = cell.y
+      item.w = drag.w
+      item.h = drag.h
+      item.rotated = drag.rotated
+      gridRecomputeCells(grid)
+    }
+  }
+  gridDrag.value = null
+  gridHover.value = null
+}
+
+function rotateDraggedGridItem() {
+  const drag = gridDrag.value
+  if (!drag)
+    return
+  const nextW = drag.h
+  const nextH = drag.w
+  drag.w = nextW
+  drag.h = nextH
+  drag.rotated = !drag.rotated
 }
 
 onMounted(() => {
@@ -584,7 +721,103 @@ onBeforeUnmount(() => {
                 背包
               </div>
             </div>
-            <div v-if="bagEntries(inventoryData.backpack).length === 0" class="text-sm opacity-80">
+            <div v-if="gridState" class="flex flex-col gap-3">
+              <div class="text-xs opacity-80">
+                拖拽摆放 · 拖拽中按 R 旋转
+              </div>
+              <div
+                class="relative rounded-xl border border-white/10 bg-black/35 p-3"
+                :style="{ width: `${gridState.cols * gridCellPx + 24}px` }"
+              >
+                <div
+                  class="relative"
+                  :style="{ width: `${gridState.cols * gridCellPx}px`, height: `${gridState.rows * gridCellPx}px` }"
+                  @pointermove="onGridPointerMove"
+                  @pointerup="onGridPointerUp"
+                  @pointerleave="onGridPointerUp"
+                >
+                  <div
+                    class="absolute inset-0 grid gap-[2px]"
+                    :style="{
+                      gridTemplateColumns: `repeat(${gridState.cols}, ${gridCellPx - 2}px)`,
+                      gridTemplateRows: `repeat(${gridState.rows}, ${gridCellPx - 2}px)`,
+                    }"
+                  >
+                    <div
+                      v-for="i in (gridState.cols * gridState.rows)"
+                      :key="`cell:${i}`"
+                      class="rounded-md border border-white/5 bg-white/5"
+                    />
+                  </div>
+
+                  <div
+                    v-if="gridHover"
+                    class="absolute rounded-lg border-2"
+                    :class="gridHover.canFit ? 'border-emerald-400/80 bg-emerald-400/15' : 'border-rose-400/80 bg-rose-400/15'"
+                    :style="{
+                      left: `${gridHover.x * gridCellPx}px`,
+                      top: `${gridHover.y * gridCellPx}px`,
+                      width: `${gridHover.w * gridCellPx}px`,
+                      height: `${gridHover.h * gridCellPx}px`,
+                    }"
+                  />
+
+                  <button
+                    v-for="it in (gridState.items || [])"
+                    :key="`gi:${it.uid}`"
+                    class="absolute flex items-center justify-center rounded-lg border border-white/15 bg-white/10 px-2 text-center text-[11px] font-semibold text-white hover:bg-white/15"
+                    :style="{
+                      left: `${it.x * gridCellPx}px`,
+                      top: `${it.y * gridCellPx}px`,
+                      width: `${it.w * gridCellPx}px`,
+                      height: `${it.h * gridCellPx}px`,
+                      opacity: gridDrag && gridDrag.uid === it.uid ? 0.65 : 1,
+                    }"
+                    @pointerdown="(e) => onGridItemPointerDown(e, it.uid)"
+                  >
+                    <span class="truncate">
+                      {{ it.itemId }}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="bagEntries(inventoryData.backpack).length === 0" class="text-sm opacity-80">
+                空
+              </div>
+              <div v-else class="space-y-2">
+                <div
+                  v-for="row in bagEntries(inventoryData.backpack)"
+                  :key="`bp:${row.id}`"
+                  class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
+                >
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-semibold">
+                      {{ itemLabel(row.id) }}
+                    </div>
+                    <div class="text-xs opacity-80">
+                      x{{ row.count }}
+                    </div>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <button
+                      v-if="row.id === 'material_gun'"
+                      class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                      @click="equipItem(row.id)"
+                    >
+                      装备/收起
+                    </button>
+                    <button
+                      class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                      @click="transferItem('backpack', 'warehouse', row.id, 1)"
+                    >
+                      存入
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="bagEntries(inventoryData.backpack).length === 0" class="text-sm opacity-80">
               空
             </div>
             <div v-else class="space-y-2">
