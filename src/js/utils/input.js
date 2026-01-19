@@ -190,9 +190,6 @@ export default class InputManager {
         this.keys.b = isPressed
         break
       case 'h':
-        if (isPressed && !this.keys.h) {
-          emitter.emit('input:toggle_warehouse')
-        }
         this.keys.h = isPressed
         break
     }

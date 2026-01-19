@@ -269,29 +269,29 @@ export default class BlockDungeonGenerator {
   }
 
   _createLayout(_type) {
-    const r1 = { l: 5, w: 0, width: 9, length: 9, height: 5, type: 'start' }
+    const r1 = { l: 5, w: 0, width: 11, length: 11, height: 6, type: 'start' }
 
-    const f1 = { l: 22, w: 0, width: 11, length: 11, height: 6, type: 'fight1' }
-    const f2 = { l: 38, w: 7, width: 9, length: 9, height: 6, type: 'fight2' }
-    const f3 = { l: 38, w: -7, width: 9, length: 9, height: 6, type: 'fight3' }
-    const f4 = { l: 54, w: 0, width: 13, length: 13, height: 7, type: 'fight4' }
+    const f1 = { l: 22, w: 0, width: 15, length: 15, height: 8, type: 'fight1' }
+    const f2 = { l: 38, w: 10, width: 13, length: 13, height: 8, type: 'fight2' }
+    const f3 = { l: 38, w: -10, width: 13, length: 13, height: 8, type: 'fight3' }
+    const f4 = { l: 54, w: 0, width: 19, length: 19, height: 9, type: 'fight4' }
 
-    const ex = { l: 70, w: 0, width: 9, length: 9, height: 5, type: 'extraction' }
+    const ex = { l: 70, w: 0, width: 15, length: 15, height: 7, type: 'extraction' }
 
     const corridors = [
-      { l: 14, w: 0, width: 3, length: 12, height: 5, axis: 'forward' }, // start -> fight1
-      { l: 30, w: 0, width: 3, length: 12, height: 5, axis: 'forward' }, // fight1 -> branch junction
+      { l: 14, w: 0, width: 7, length: 12, height: 6, axis: 'forward' }, // start -> fight1
+      { l: 30, w: 0, width: 7, length: 12, height: 6, axis: 'forward' }, // fight1 -> branch junction
 
-      { l: 38, w: 3.5, width: 3, length: 9, height: 5, axis: 'right' }, // junction -> fight2
-      { l: 38, w: -3.5, width: 3, length: 9, height: 5, axis: 'right' }, // junction -> fight3
-      { l: 38, w: 0, width: 3, length: 17, height: 5, axis: 'right' }, // fight2 <-> fight3 loop
+      { l: 38, w: 5, width: 7, length: 17, height: 6, axis: 'right' }, // junction -> fight2
+      { l: 38, w: -5, width: 7, length: 17, height: 6, axis: 'right' }, // junction -> fight3
+      { l: 38, w: 0, width: 7, length: 33, height: 6, axis: 'right' }, // fight2 <-> fight3 loop
 
-      { l: 46, w: 7, width: 3, length: 12, height: 5, axis: 'forward' }, // fight2 -> fight4 approach
-      { l: 46, w: -7, width: 3, length: 12, height: 5, axis: 'forward' }, // fight3 -> fight4 approach
-      { l: 54, w: 3.5, width: 3, length: 9, height: 5, axis: 'right' }, // fight2 lane -> fight4
-      { l: 54, w: -3.5, width: 3, length: 9, height: 5, axis: 'right' }, // fight3 lane -> fight4
+      { l: 46, w: 10, width: 7, length: 12, height: 6, axis: 'forward' }, // fight2 -> fight4 approach
+      { l: 46, w: -10, width: 7, length: 12, height: 6, axis: 'forward' }, // fight3 -> fight4 approach
+      { l: 54, w: 5, width: 7, length: 17, height: 6, axis: 'right' }, // fight2 lane -> fight4
+      { l: 54, w: -5, width: 7, length: 17, height: 6, axis: 'right' }, // fight3 lane -> fight4
 
-      { l: 62, w: 0, width: 3, length: 12, height: 5, axis: 'forward' }, // fight4 -> extraction
+      { l: 62, w: 0, width: 7, length: 12, height: 6, axis: 'forward' }, // fight4 -> extraction
     ]
 
     return {

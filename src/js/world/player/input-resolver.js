@@ -1,7 +1,7 @@
 /**
  * 解析原始输入，处理冲突并返回有效方向 + 归一化权重
  * @param {object} rawInput - { forward, backward, left, right }
- * @returns {{ resolvedInput: object, weights: object }}
+ * @returns {{ resolvedInput: object, weights: object }} 解析后的输入与归一化权重
  */
 export function resolveDirectionInput(rawInput) {
   const resolvedInput = {

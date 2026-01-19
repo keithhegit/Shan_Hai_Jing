@@ -211,6 +211,8 @@ function bagEntries(bag) {
 function itemLabel(id) {
   if (id === 'fence')
     return 'Fence'
+  if (id === 'coin')
+    return '金币'
   if (id === 'material_gun')
     return '物质枪'
   if (id === 'canister_small')
@@ -527,7 +529,10 @@ onBeforeUnmount(() => {
             <span>右键</span> <span>投掷灵兽</span>
           </div>
           <div class="flex justify-between">
-            <span>B / H</span> <span>背包 / 仓库</span>
+            <span>B</span> <span>背包</span>
+          </div>
+          <div class="flex justify-between">
+            <span>E</span> <span>交互 / 打开仓库</span>
           </div>
         </div>
       </div>
@@ -561,7 +566,7 @@ onBeforeUnmount(() => {
             <span class="shrink-0 text-xs opacity-85">
               <span v-if="opt.completed">已完成</span>
               <span v-else-if="(opt.total || 0) > 0">{{ opt.read || 0 }}/{{ opt.total || 0 }}</span>
-              <span v-else> </span>
+              <span v-else />
             </span>
           </button>
         </div>
@@ -710,11 +715,11 @@ onBeforeUnmount(() => {
             class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
             @click="closeInventoryPanel"
           >
-            关闭 (ESC/B/H)
+            关闭 (ESC/B)
           </button>
         </div>
 
-        <div class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div class="mt-4 grid grid-cols-1 gap-4" :class="inventoryPanel === 'warehouse' ? 'md:grid-cols-2' : ''">
           <div class="rounded-2xl border border-white/15 bg-black/30 p-4">
             <div class="mb-3 flex items-center justify-between">
               <div class="text-sm font-bold text-white/90">
@@ -808,6 +813,7 @@ onBeforeUnmount(() => {
                       装备/收起
                     </button>
                     <button
+                      v-if="inventoryPanel === 'warehouse'"
                       class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
                       @click="transferItem('backpack', 'warehouse', row.id, 1)"
                     >
@@ -843,6 +849,7 @@ onBeforeUnmount(() => {
                     装备/收起
                   </button>
                   <button
+                    v-if="inventoryPanel === 'warehouse'"
                     class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
                     @click="transferItem('backpack', 'warehouse', row.id, 1)"
                   >
@@ -853,7 +860,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="rounded-2xl border border-white/15 bg-black/30 p-4">
+          <div v-if="inventoryPanel === 'warehouse'" class="rounded-2xl border border-white/15 bg-black/30 p-4">
             <div class="mb-3 flex items-center justify-between">
               <div class="text-sm font-bold text-white/90">
                 仓库

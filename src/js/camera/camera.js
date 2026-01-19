@@ -4,6 +4,7 @@ import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls
 
 import Experience from '../experience.js'
 import emitter from '../utils/event-bus.js'
+import { blocks } from '../world/terrain/blocks-config.js'
 
 export default class Camera {
   constructor() {
@@ -49,6 +50,15 @@ export default class Camera {
       smoothSpeed: 0.09, // 纵向平滑
       maxRaise: 6.0, // 单帧相对基础位置最大抬升
     }
+
+    this.obstruction = {
+      enabled: true,
+      step: 0.35,
+      margin: 0.45,
+      minDistance: 0.9,
+      smoothSpeed: 0.18,
+    }
+    this._obstructedDistance = null
 
     // 内部缓存
     // this._raycaster = new THREE.Raycaster() // 已移除遮挡避让
@@ -419,8 +429,11 @@ export default class Camera {
       // 2. 地形自适应 (在基础位置上做纵向调整)
       const terrainAdjustedPos = this._applyTerrainAdaptation(basePos)
 
-      // 3. 叠加 Bobbing 偏移 (最后叠加)
-      this.instance.position.copy(terrainAdjustedPos).add(output.bobbingOffset)
+      // 3. 遮挡避让（缩臂，避免墙体挡住视野）
+      const obstructionAdjustedPos = this._applyObstructionAdjustment(terrainAdjustedPos, output.targetPos)
+
+      // 4. 叠加 Bobbing 偏移 (最后叠加)
+      this.instance.position.copy(obstructionAdjustedPos).add(output.bobbingOffset)
 
       // ===== 朝向处理 =====
       // 更新相机朝向 (LookAt 已经由 Rig 平滑处理)
@@ -482,6 +495,60 @@ export default class Camera {
     const adjusted = desiredCameraPos.clone()
     adjusted.y = this._adaptiveY
     return adjusted
+  }
+
+  _applyObstructionAdjustment(desiredCameraPos, targetPos) {
+    if (!this.obstruction.enabled)
+      return desiredCameraPos
+    const provider = this.experience.terrainDataManager
+    if (!provider?.getBlockWorld)
+      return desiredCameraPos
+
+    const from = targetPos?.clone?.() || this.target.clone()
+    const to = desiredCameraPos.clone()
+    const dir = to.clone().sub(from)
+    const maxDist = dir.length()
+    if (!Number.isFinite(maxDist) || maxDist < 0.001)
+      return desiredCameraPos
+    dir.multiplyScalar(1 / maxDist)
+
+    let hitDist = null
+    const step = Math.max(0.1, Number(this.obstruction.step) || 0.35)
+    const margin = Math.max(0.1, Number(this.obstruction.margin) || 0.45)
+    const minDistance = Math.max(0.3, Number(this.obstruction.minDistance) || 0.9)
+
+    for (let t = step; t <= maxDist; t += step) {
+      const px = from.x + dir.x * t
+      const py = from.y + dir.y * t
+      const pz = from.z + dir.z * t
+      const ix = Math.floor(px)
+      const iz = Math.floor(pz)
+      const y0 = Math.floor(py)
+      for (let yy = y0; yy <= y0 + 1; yy++) {
+        const block = provider.getBlockWorld(ix, yy, iz)
+        if (block?.id && block.id !== blocks.empty.id) {
+          hitDist = t
+          break
+        }
+      }
+      if (hitDist !== null)
+        break
+    }
+
+    const targetDist = hitDist === null
+      ? maxDist
+      : Math.max(minDistance, hitDist - margin)
+
+    if (this._obstructedDistance === null)
+      this._obstructedDistance = targetDist
+    const smooth = THREE.MathUtils.clamp(Number(this.obstruction.smoothSpeed) || 0.18, 0, 1)
+    this._obstructedDistance += (targetDist - this._obstructedDistance) * smooth
+
+    return new THREE.Vector3(
+      from.x + dir.x * this._obstructedDistance,
+      from.y + dir.y * this._obstructedDistance,
+      from.z + dir.z * this._obstructedDistance,
+    )
   }
 
   /**

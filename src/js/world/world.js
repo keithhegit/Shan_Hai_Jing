@@ -70,6 +70,7 @@ export default class World {
       itemWeights: {
         stone: 1,
         fence: 4,
+        coin: 0,
         crystal_big: 6,
         crystal_small: 3,
         canister_small: 4,
@@ -175,7 +176,6 @@ export default class World {
       // Setup
       this.player = new Player()
       this._initCanisterVisuals()
-      this._initHeartHud()
       this._applyBurdenEffects()
 
       // Setup Camera Rig
@@ -288,6 +288,10 @@ export default class World {
               emitter.emit('dungeon:toast', { text: `获得：${this._getModelFilenameByResourceKey(itemId)} x${count}（已放入背包）` })
             }
             else {
+              if (this.currentWorld === 'dungeon') {
+                emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(itemId)} x${count}` })
+                return
+              }
               this._addInventoryItem('warehouse', itemId, count)
               emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(itemId)} x${count}（已入库）` })
             }
@@ -450,7 +454,7 @@ export default class World {
       emitter.on('game:resume', this._onResume)
 
       this._onToggleBackpack = () => {
-        this._toggleInventoryPanel('backpack')
+        this._toggleBackpackPanel()
       }
       this._onToggleWarehouse = () => {
         this._toggleInventoryPanel('warehouse')
@@ -1976,6 +1980,8 @@ export default class World {
         this._closeInventoryPanel()
         return
       }
+      if (panel === 'warehouse' && (this.currentWorld !== 'hub' || this._activeInteractable?.id !== 'warehouse'))
+        return
       this._activeInventoryPanel = panel
       this._emitInventoryState()
       emitter.emit('inventory:open', { panel })
@@ -1983,7 +1989,19 @@ export default class World {
     }
     if (this.isPaused)
       return
+    if (panel === 'warehouse' && (this.currentWorld !== 'hub' || this._activeInteractable?.id !== 'warehouse'))
+      return
     this._openInventoryPanel(panel)
+  }
+
+  _toggleBackpackPanel() {
+    if (this._activeInventoryPanel) {
+      this._closeInventoryPanel()
+      return
+    }
+    if (this.isPaused)
+      return
+    this._openInventoryPanel('backpack')
   }
 
   _openInventoryPanel(panel) {
@@ -2049,6 +2067,8 @@ export default class World {
     const itemId = payload?.itemId
     const amount = payload?.amount ?? 1
     if (!from || !to || from === to || !itemId)
+      return
+    if ((from === 'warehouse' || to === 'warehouse') && (this.currentWorld !== 'hub' || this._activeInventoryPanel !== 'warehouse' || this._activeInteractable?.id !== 'warehouse'))
       return
     const delta = Math.max(0, Math.floor(Number(amount) || 0))
     if (to === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
@@ -2739,7 +2759,8 @@ export default class World {
       const isBoss = !!pos.isBoss
       const enemyType = String(pos?.type || '').trim() || 'skeleton'
       const hp = Number.isFinite(Number(pos?.hp)) ? Number(pos.hp) : (isBoss ? 12 : 4)
-      const scale = Number.isFinite(Number(pos?.scale)) ? Number(pos.scale) : (isBoss ? 1.15 : 1)
+      const baseScale = Number.isFinite(Number(pos?.scale)) ? Number(pos.scale) : (isBoss ? 1.15 : 1)
+      const scale = baseScale * (isBoss ? (2 / 3) : 0.5)
 
       const enemy = new HumanoidEnemy({
         position: new THREE.Vector3(pos.x, pos.y + 0.1, pos.z),
@@ -2801,13 +2822,13 @@ export default class World {
     emitter.emit('loading:show', { title: '正在返回：超平坦世界' })
 
     setTimeout(() => {
+      this.currentWorld = 'hub'
       const { x, z } = this._hubCenter
       this.chunkManager.updateStreaming({ x, z }, true)
       this.chunkManager.pumpIdleQueue()
       const y = this._getSurfaceY(x, z)
       this.player.teleportTo(x, y + 1.1, z)
 
-      this.currentWorld = 'hub'
       if (this.player?.movement?.config?.respawn?.position && this._savedRespawnPosition) {
         this.player.movement.config.respawn.position = { ...this._savedRespawnPosition }
         this._savedRespawnPosition = null
@@ -3866,6 +3887,10 @@ export default class World {
         if (!this._dungeonRewardSpawned)
           this._spawnDungeonReward()
       }
+      if (enemy && !enemy.isBoss && enemy.isDead && !enemy._coinDropped) {
+        enemy._coinDropped = true
+        this._spawnDungeonCoinDrop(enemy)
+      }
       if (enemy?.isDead)
         continue
 
@@ -3952,6 +3977,68 @@ export default class World {
         enemy.group.position.y += (groundY - enemy.group.position.y) * 0.15
       }
     }
+  }
+
+  _spawnDungeonCoinDrop(enemy) {
+    if (this.currentWorld !== 'dungeon')
+      return
+    if (!enemy?.group)
+      return
+    if (!this._dungeonInteractables)
+      this._dungeonInteractables = []
+    if (!this._dungeonInteractablesGroup) {
+      this._dungeonInteractablesGroup = new THREE.Group()
+      this._dungeonGroup?.add?.(this._dungeonInteractablesGroup)
+    }
+
+    const portalId = this._activeDungeonPortalId || 'dungeon'
+    const index = this._dungeonInteractables.length
+    const id = `coin-${portalId}-${index}`
+
+    const pos = new THREE.Vector3()
+    enemy.group.getWorldPosition(pos)
+    const x = pos.x
+    const z = pos.z
+    const y = this._getSurfaceY(x, z)
+
+    let mesh = null
+    const resource = this.resources.items.coin
+    if (resource?.scene) {
+      mesh = resource.scene.clone(true)
+      mesh.scale.setScalar(0.65)
+    }
+    else {
+      mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 0.06, 16),
+        new THREE.MeshStandardMaterial({ color: 0xFFCC33, roughness: 0.35, metalness: 0.25, emissive: 0x332200, emissiveIntensity: 0.2 }),
+      )
+    }
+    mesh.position.set(x, y + 0.6, z)
+    mesh.traverse?.((child) => {
+      if (child?.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+    this._dungeonInteractablesGroup.add(mesh)
+
+    const hitRadius = this._getHitRadiusFromObject(mesh, 0.55)
+    this._dungeonInteractables.push({
+      id,
+      title: '金币',
+      description: '战利品。可作为后续消耗性资源。',
+      hint: '按 E 拾取',
+      pickupItemId: 'coin',
+      pickupAmount: 1,
+      x,
+      y,
+      z,
+      mesh,
+      hitRadius,
+      range: 2.8,
+      read: false,
+      spinSpeed: 0.04,
+    })
   }
 
   _updatePortals() {
@@ -4093,7 +4180,6 @@ export default class World {
       this._updateLockOn()
     this._updateMaterialGun()
     this._updateCapture()
-    this._updateHeartHud()
     this._updateNameLabelVisibility()
   }
 

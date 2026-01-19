@@ -59,6 +59,7 @@ export default [
   { name: 'material_gun', type: 'gltfModel', path: 'models/Tools/heart.glb' },
   { name: 'heart_ui', type: 'gltfModel', path: 'models/Tools/heart.glb' },
   { name: 'canister', type: 'gltfModel', path: 'models/Environment/crystal3.glb' },
+  { name: 'coin', type: 'gltfModel', path: 'models/Environment/coin.glb' },
   { name: 'crystal_big', type: 'gltfModel', path: 'models/Environment/Crystal_Big.gltf' },
   { name: 'crystal_small', type: 'gltfModel', path: 'models/Environment/Crystal_Small.gltf' },
   // ===== Animals =====
