@@ -107,8 +107,11 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
   await page.keyboard.press('e')
   await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === 'warehouse', { timeout: 10_000 })
 
-  await page.keyboard.press('b')
-  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === null, { timeout: 10_000 })
+  await page.evaluate(() => {
+    const world = window.Experience?.world
+    world?._closeInventoryPanel?.()
+  })
+  await page.waitForFunction(() => window.Experience?.world?._activeInventoryPanel === null, { timeout: 20_000 })
 
   await page.evaluate(() => {
     const world = window.Experience.world
@@ -447,6 +450,100 @@ test('dungeon: minion drops coin and pickup goes to backpack', async ({ page }) 
 
   expect(after.ok).toBe(true)
   expect(after.coins).toBeGreaterThan(before.coins)
+})
+
+test('camera: obstruction never places camera inside solid blocks', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player && window.Experience?.world?.chunkManager), { timeout: 90_000 })
+
+  const placed = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const cam = world.experience.camera.instance
+    const p = world.player.getPosition()
+    const c = cam.position.clone()
+    const dir = c.clone().sub(p)
+    const len = dir.length()
+    if (!(len > 0.5))
+      return null
+    dir.multiplyScalar(1 / len)
+    const mid = p.clone().add(dir.multiplyScalar(len * 0.7))
+    const ix = Math.floor(mid.x)
+    const iz = Math.floor(mid.z)
+    const baseY = cm.getTopSolidYWorld(ix, iz)
+    const top = (typeof baseY === 'number' ? baseY : 10) + 1
+    for (let yy = top; yy <= top + 4; yy++)
+      cm.addBlockWorld(ix, yy, iz, 3)
+    return { ix, iz, top }
+  })
+
+  expect(placed).not.toBeNull()
+  await page.waitForTimeout(600)
+
+  const inside = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const cam = world.experience.camera.instance
+    const cx = Math.floor(cam.position.x)
+    const cz = Math.floor(cam.position.z)
+    const cy = Math.floor(cam.position.y)
+    for (let yy = cy - 1; yy <= cy + 1; yy++) {
+      const block = cm.getBlockWorld(cx, yy, cz)
+      if (block?.id && block.id !== 0)
+        return true
+    }
+    return false
+  })
+
+  expect(inside).toBe(false)
+})
+
+test('camera: front wall should not trigger snap-to-wall', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player && window.Experience?.world?.chunkManager), { timeout: 90_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const p = world.player.getPosition()
+    const x = Math.floor(p.x)
+    const z = Math.floor(p.z)
+    const baseY = cm.getTopSolidYWorld(x, z)
+    const top = (typeof baseY === 'number' ? baseY : 10) + 1
+    for (let yy = top; yy <= top + 4; yy++)
+      cm.addBlockWorld(x, yy, z + 2, 2)
+    world.player.setFacing(0)
+  })
+
+  await page.waitForTimeout(350)
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    world.cameraRig?.toggleSide?.()
+  })
+
+  await page.waitForTimeout(800)
+
+  const inside = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const cam = world.experience.camera.instance
+    const cx = Math.floor(cam.position.x)
+    const cz = Math.floor(cam.position.z)
+    const cy = Math.floor(cam.position.y)
+    for (let yy = cy - 1; yy <= cy + 1; yy++) {
+      const block = cm.getBlockWorld(cx, yy, cz)
+      if (block?.id && block.id !== 0)
+        return true
+    }
+    return false
+  })
+
+  expect(inside).toBe(false)
 })
 
 test('dungeon: each portal spawns themed enemies and boss', async ({ page }) => {

@@ -53,10 +53,10 @@ export default class Camera {
 
     this.obstruction = {
       enabled: true,
-      step: 0.35,
-      margin: 0.45,
-      minDistance: 0.9,
-      smoothSpeed: 0.18,
+      step: 0.25,
+      margin: 0.8,
+      minDistance: 1.6,
+      smoothSpeed: 0.12,
     }
     this._obstructedDistance = null
 
@@ -504,7 +504,7 @@ export default class Camera {
     if (!provider?.getBlockWorld)
       return desiredCameraPos
 
-    const from = targetPos?.clone?.() || this.target.clone()
+    const from = this._getObstructionOrigin(targetPos)
     const to = desiredCameraPos.clone()
     const dir = to.clone().sub(from)
     const maxDist = dir.length()
@@ -524,6 +524,9 @@ export default class Camera {
       const ix = Math.floor(px)
       const iz = Math.floor(pz)
       const y0 = Math.floor(py)
+      const ground = this._sampleGroundHeight(px, pz)
+      if (ground !== null && py <= ground + 0.25)
+        continue
       for (let yy = y0; yy <= y0 + 1; yy++) {
         const block = provider.getBlockWorld(ix, yy, iz)
         if (block?.id && block.id !== blocks.empty.id) {
@@ -539,8 +542,9 @@ export default class Camera {
       ? maxDist
       : Math.max(minDistance, hitDist - margin)
 
+    // 初始帧不直接跳到 targetDist，先从 maxDist 开始平滑，避免“贴脸”闪跳
     if (this._obstructedDistance === null)
-      this._obstructedDistance = targetDist
+      this._obstructedDistance = maxDist
     const smooth = THREE.MathUtils.clamp(Number(this.obstruction.smoothSpeed) || 0.18, 0, 1)
     this._obstructedDistance += (targetDist - this._obstructedDistance) * smooth
 
@@ -549,6 +553,16 @@ export default class Camera {
       from.y + dir.y * this._obstructedDistance,
       from.z + dir.z * this._obstructedDistance,
     )
+  }
+
+  _getObstructionOrigin(preferredTargetPos) {
+    const playerPos = this.rig?.target?.getPosition?.()
+    if (playerPos) {
+      const origin = playerPos.clone()
+      origin.y += 1.35
+      return origin
+    }
+    return preferredTargetPos?.clone?.() || this.target.clone()
   }
 
   /**
