@@ -101,7 +101,10 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     const z = item.z - 1.2
     const y = world._getSurfaceY(x, z)
     world.player.teleportTo(x, y + 1.1, z)
-    world.player.setFacing(Math.atan2(item.x - x, item.z - z))
+    const dx = item.x - x
+    const dz = item.z - z
+    const facing = world._getFacingTo ? world._getFacingTo(dx, dz) : Math.atan2(dx, dz)
+    world.player.setFacing(facing)
   })
 
   await page.keyboard.press('e')
@@ -125,7 +128,10 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     const y = world._getSurfaceY(x, z)
 
     world.player.teleportTo(x, y + 1.1, z)
-    world.player.setFacing(Math.atan2(a.x - x, a.z - z))
+    const dx = a.x - x
+    const dz = a.z - z
+    const facing = world._getFacingTo ? world._getFacingTo(dx, dz) : Math.atan2(dx, dz)
+    world.player.setFacing(facing)
   })
 
   await page.evaluate(() => {
@@ -198,7 +204,10 @@ test('combat: lock-on toggles and melee hit reduces hp', async ({ page }) => {
     const y = world._getSurfaceY(x, z)
 
     world.player.teleportTo(x, y + 1.1, z)
-    world.player.setFacing(Math.atan2(epos.x - x, epos.z - z))
+    const dx2 = epos.x - x
+    const dz2 = epos.z - z
+    const facing2 = world._getFacingTo ? world._getFacingTo(dx2, dz2) : Math.atan2(dx2, dz2)
+    world.player.setFacing(facing2)
 
     world._toggleLockOn()
     world._toggleLockOn()
@@ -290,7 +299,10 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
     const z = a.z - 3.0
     const y = world._getSurfaceY(x, z)
     world.player.teleportTo(x, y + 1.1, z)
-    world.player.setFacing(Math.atan2(a.x - x, a.z - z))
+    const dx3 = a.x - x
+    const dz3 = a.z - z
+    const facing3 = world._getFacingTo ? world._getFacingTo(dx3, dz3) : Math.atan2(dx3, dz3)
+    world.player.setFacing(facing3)
 
     world._lockedEnemy?.setLocked?.(false)
     world._lockedEnemy = animal
@@ -320,6 +332,119 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
 
   expect(hpAfter).toBeLessThan(hpBefore)
   expect(forcedAggro).toBe(true)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('material gun: firing while locked quickly faces target', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonEnemies?.length), { timeout: 20_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const enemy = (world._dungeonEnemies || []).find(e => e && !e.isBoss && !e.isDead) || world._dungeonEnemies?.[0] || null
+    if (!enemy || !world?.player)
+      return
+
+    const epos = enemy.group.position.clone()
+    const x = epos.x
+    const z = epos.z - 7.0
+    const y = world._getSurfaceY(x, z)
+    world.player.teleportTo(x, y + 1.1, z)
+
+    const desired = Math.atan2(epos.x - x, epos.z - z)
+    const away = desired + Math.PI
+    world.player.setFacing(away)
+    if (typeof world.player.targetFacingAngle === 'number')
+      world.player.targetFacingAngle = away
+
+    world._lockedEnemy?.setLocked?.(false)
+    world._lockedEnemy = enemy
+    world._lockedEnemy?.setLocked?.(true)
+
+    world._isMaterialGunEquipped = true
+    world.player.setMatterGunEquipped?.(true)
+    world._startMaterialGunFire()
+
+    window.__pwFacingEnemy = enemy
+  })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    const enemy = window.__pwFacingEnemy
+    if (!world?.player || !enemy?.group)
+      return false
+    const p = world.player.getPosition()
+    const epos = enemy.group.position
+    const dx = epos.x - p.x
+    const dz = epos.z - p.z
+    const len = Math.hypot(dx, dz)
+    if (!(len > 0.0001))
+      return true
+    const facing = world.player.getFacingAngle()
+    const fx = -Math.sin(facing)
+    const fz = -Math.cos(facing)
+    const nx = dx / len
+    const nz = dz / len
+    const dot = fx * nx + fz * nz
+    return dot >= 0.75
+  }, { timeout: 3_000 })
+
+  const dot = await page.evaluate(() => {
+    const world = window.Experience.world
+    const enemy = window.__pwFacingEnemy
+    if (!world?.player || !enemy?.group)
+      return null
+    const p = world.player.getPosition()
+    const epos = enemy.group.position
+    const dx = epos.x - p.x
+    const dz = epos.z - p.z
+    const len = Math.hypot(dx, dz)
+    const facing = world.player.getFacingAngle()
+    const fx = -Math.sin(facing)
+    const fz = -Math.cos(facing)
+    const nx = len > 0.0001 ? (dx / len) : 0
+    const nz = len > 0.0001 ? (dz / len) : 0
+    const dot = fx * nx + fz * nz
+
+    world._stopMaterialGunFire()
+    world._isMaterialGunEquipped = false
+    world.player.setMatterGunEquipped?.(false)
+    world._clearLockOn?.()
+    delete window.__pwFacingEnemy
+
+    return dot
+  })
+
+  expect(dot).not.toBeNull()
+  expect(dot).toBeGreaterThanOrEqual(0.75)
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
@@ -359,8 +484,8 @@ test('dungeon: layout has 4 fight rooms with branching/loop and themed boss', as
     }
   })
 
-  expect(result.rooms).toBe(6)
-  for (const t of ['start', 'fight1', 'fight2', 'fight3', 'fight4', 'extraction'])
+  expect(result.rooms).toBe(8)
+  for (const t of ['entrance', 'fight1', 'fight2', 'fight3', 'fight4', 'boss', 'treasure', 'exit'])
     expect(result.roomTypes).toContain(t)
   expect(result.corridorCount).toBeGreaterThanOrEqual(7)
   expect(result.hasRightAxis).toBe(true)
@@ -380,10 +505,18 @@ test('dungeon: layout has 4 fight rooms with branching/loop and themed boss', as
     const world = window.Experience.world
     const enemies = world._dungeonEnemies || []
     const b = enemies.find(e => e?.isBoss) || null
-    return b ? { isBoss: true, type: b._resourceKey || b._typeLabel || b.type || null, maxHp: b.maxHp, hp: b.hp } : null
+    return {
+      count: enemies.length,
+      bossCount: enemies.filter(e => e?.isBoss).length,
+      minionCount: enemies.filter(e => e && !e.isBoss).length,
+      boss: b ? { isBoss: true, type: b._resourceKey || b._typeLabel || b.type || null, maxHp: b.maxHp, hp: b.hp } : null,
+    }
   })
 
-  expect(boss).not.toBeNull()
+  expect(boss.boss).not.toBeNull()
+  expect(boss.count).toBe(5)
+  expect(boss.bossCount).toBe(1)
+  expect(boss.minionCount).toBe(4)
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
@@ -402,6 +535,43 @@ test('scale: player visual is smaller to reduce corridor occlusion', async ({ pa
   expect(s.x).toBeCloseTo(0.5, 3)
   expect(s.y).toBeCloseTo(0.5, 3)
   expect(s.z).toBeCloseTo(0.5, 3)
+})
+
+test('dungeon: exit marker is in a clear spot', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._dungeonPortals?.length), { timeout: 90_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'plains') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonExit), { timeout: 20_000 })
+
+  const clear = await page.evaluate(() => {
+    const world = window.Experience.world
+    const exit = world._dungeonExit
+    const cm = world.chunkManager
+    if (!exit || !cm?.getBlockWorld)
+      return { ok: false, reason: 'no-exit-or-getBlockWorld' }
+    const x = Math.floor(exit.x)
+    const z = Math.floor(exit.z)
+    const y = Math.floor(world._getSurfaceY(exit.x, exit.z))
+    const ids = []
+    for (let dy = 1; dy <= 4; dy++) {
+      const b = cm.getBlockWorld(x, y + dy, z)
+      ids.push(b?.id ?? 0)
+    }
+    const ok = ids.every(id => !id)
+    return { ok, ids, x, y, z }
+  })
+
+  expect(clear.ok, JSON.stringify(clear)).toBe(true)
 })
 
 test('dungeon: minion drops coin and pickup goes to backpack', async ({ page }) => {

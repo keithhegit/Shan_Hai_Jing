@@ -932,7 +932,7 @@ export default class World {
     target.group.getWorldPosition(epos)
     const dx = epos.x - p.x
     const dz = epos.z - p.z
-    const desired = Math.atan2(dx, dz)
+    const desired = this._getFacingTo(dx, dz)
     this.player.setFacing?.(desired)
 
     if (now - (this._captureStartAt ?? 0) >= this._captureDurationMs) {
@@ -1169,6 +1169,16 @@ export default class World {
     this._lockedEnemy.setLocked?.(true)
     emitter.emit('combat:toggle_lock', enemy.group)
     emitter.emit('combat:lock', { title: '已锁定', hint: '中键解除' })
+
+    const p = this.player.getPosition()
+    const epos = new THREE.Vector3()
+    enemy.group.getWorldPosition(epos)
+    const dx = epos.x - p.x
+    const dz = epos.z - p.z
+    const desired = this._getFacingTo(dx, dz)
+    this.player.setFacing(desired)
+    if (typeof this.player.targetFacingAngle === 'number')
+      this.player.targetFacingAngle = desired
   }
 
   _updateLockOn() {
@@ -1207,10 +1217,16 @@ export default class World {
       return
     }
 
-    const desired = Math.atan2(dx, dz)
+    const desired = this._getFacingTo(dx, dz)
     const current = this.player.getFacingAngle()
-    const next = this._lerpAngle(current, desired, 0.12)
+    const next = this._lerpAngle(current, desired, this._isMaterialGunFiring ? 0.35 : 0.12)
     this.player.setFacing(next)
+    if (typeof this.player.targetFacingAngle === 'number')
+      this.player.targetFacingAngle = next
+  }
+
+  _getFacingTo(dx, dz) {
+    return Math.atan2(-dx, -dz)
   }
 
   _lerpAngle(current, target, t) {
@@ -2685,27 +2701,46 @@ export default class World {
     const { spawn, exit, enemies, interactables, reward } = dungeonInfo
 
     // Exit Mesh (保持视觉标记)
-    const exitGeometry = new THREE.TorusGeometry(1.15, 0.18, 16, 48)
+    const exitGeometry = new THREE.TorusGeometry(1.55, 0.22, 16, 48)
     const exitMaterial = new THREE.MeshBasicMaterial({
       color: 0xFF_FF_FF,
       transparent: true,
       opacity: 0.95,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
     })
     const exitMesh = new THREE.Mesh(exitGeometry, exitMaterial)
-    // 稍微浮空一点
-    exitMesh.position.set(exit.x, exit.y + 1.2, exit.z)
     exitMesh.rotation.x = Math.PI / 2
-    this._dungeonGroup.add(exitMesh)
+
+    const beamGeo = new THREE.CylinderGeometry(0.55, 0.55, 7.5, 12, 1, true)
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0xFF_FF_FF,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    })
+    const exitBeam = new THREE.Mesh(beamGeo, beamMat)
+
+    const exitLight = new THREE.PointLight(0xFF_FF_FF, 1.35, 14, 1.4)
+
+    const exitGroup = new THREE.Group()
+    exitGroup.position.set(exit.x, exit.y, exit.z)
+    exitMesh.position.set(0, 1.2, 0)
+    exitBeam.position.set(0, 4.2, 0)
+    exitLight.position.set(0, 3.0, 0)
+    exitGroup.add(exitMesh, exitBeam, exitLight)
+    this._dungeonGroup.add(exitGroup)
 
     this._dungeonExit = {
-      mesh: exitMesh,
+      mesh: exitGroup,
       x: exit.x,
       z: exit.z,
       range: 3,
     }
     if (portal.id === 'mine') {
-      exitMesh.position.set(spawn.x, spawn.y + 1.2, spawn.z)
+      exitGroup.position.set(spawn.x, spawn.y, spawn.z)
       this._dungeonExit.x = spawn.x
       this._dungeonExit.z = spawn.z
       this._dungeonExit.range = 3.5
@@ -4463,8 +4498,8 @@ export default class World {
       return true
 
     const facing = this.player.getFacingAngle?.() ?? 0
-    const fx = Math.sin(facing)
-    const fz = Math.cos(facing)
+    const fx = -Math.sin(facing)
+    const fz = -Math.cos(facing)
 
     const nx = dx / len
     const nz = dz / len
@@ -4482,8 +4517,8 @@ export default class World {
     let bestD2 = Infinity
     const p = this.player.getPosition()
     const facing = this.player.getFacingAngle?.() ?? 0
-    const fx = Math.sin(facing)
-    const fz = Math.cos(facing)
+    const fx = -Math.sin(facing)
+    const fz = -Math.cos(facing)
 
     for (const enemy of this._dungeonEnemies) {
       if (!enemy?.group || enemy.isDead)
