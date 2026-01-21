@@ -34,6 +34,7 @@ export class PlayerMovementController {
 
     // 角色朝向角度（弧度）- 通過旋轉 group 實現
     this.facingAngle = config.facingAngle ?? Math.PI
+    this.speedMultiplier = 1
 
     // 創建父容器 group
     this.group = new THREE.Group()
@@ -62,6 +63,13 @@ export class PlayerMovementController {
    */
   update(inputState, isCombatActive) {
     this._updateCustomPhysics(inputState, isCombatActive)
+  }
+
+  setSpeedMultiplier(multiplier) {
+    const next = Number(multiplier)
+    if (!Number.isFinite(next))
+      return
+    this.speedMultiplier = Math.max(0, Math.min(1, next))
   }
 
   /**
@@ -118,8 +126,9 @@ export class PlayerMovementController {
       }
 
       const dirScale = this._computeDirectionScale(profile, inputState)
-      this.worldVelocity.x = worldX * currentSpeed * dirScale
-      this.worldVelocity.z = worldZ * currentSpeed * dirScale
+      const speed = currentSpeed * (Number.isFinite(this.speedMultiplier) ? this.speedMultiplier : 1)
+      this.worldVelocity.x = worldX * speed * dirScale
+      this.worldVelocity.z = worldZ * speed * dirScale
     }
 
     // 重力

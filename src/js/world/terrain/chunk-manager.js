@@ -69,6 +69,85 @@ export default class ChunkManager {
     }
   }
 
+  removePlantsInWorldBoxes(boxes) {
+    const list = Array.isArray(boxes) ? boxes : []
+    if (list.length === 0 || !this.chunks || this.chunks.size === 0)
+      return 0
+
+    let removed = 0
+    for (const chunk of this.chunks.values()) {
+      const plantData = chunk?.generator?.plantData
+      if (!Array.isArray(plantData) || plantData.length === 0)
+        continue
+
+      const originX = Number(chunk?.originX) || 0
+      const originZ = Number(chunk?.originZ) || 0
+      const maxX = originX + (this.chunkWidth ?? 64) - 1
+      const maxZ = originZ + (this.chunkWidth ?? 64) - 1
+
+      const overlaps = list.some((b) => {
+        const bMinX = Number(b?.minX)
+        const bMaxX = Number(b?.maxX)
+        const bMinZ = Number(b?.minZ)
+        const bMaxZ = Number(b?.maxZ)
+        if (!Number.isFinite(bMinX) || !Number.isFinite(bMaxX) || !Number.isFinite(bMinZ) || !Number.isFinite(bMaxZ))
+          return false
+        if (bMaxX < originX || bMinX > maxX)
+          return false
+        if (bMaxZ < originZ || bMinZ > maxZ)
+          return false
+        return true
+      })
+      if (!overlaps)
+        continue
+
+      const next = []
+      for (const p of plantData) {
+        const wx = originX + (p?.x ?? 0)
+        const wz = originZ + (p?.z ?? 0)
+        const wy = p?.y ?? 0
+        const hit = list.some((b) => {
+          const bMinX = Number(b?.minX)
+          const bMaxX = Number(b?.maxX)
+          const bMinZ = Number(b?.minZ)
+          const bMaxZ = Number(b?.maxZ)
+          const bMinY = Number.isFinite(Number(b?.minY)) ? Number(b.minY) : -Infinity
+          const bMaxY = Number.isFinite(Number(b?.maxY)) ? Number(b.maxY) : Infinity
+          return wx >= bMinX && wx <= bMaxX && wz >= bMinZ && wz <= bMaxZ && wy >= bMinY && wy <= bMaxY
+        })
+        if (hit) {
+          removed++
+          continue
+        }
+        next.push(p)
+      }
+
+      if (next.length !== plantData.length) {
+        chunk.generator.plantData = next
+        chunk.plantRenderer?.build?.(next)
+      }
+    }
+
+    return removed
+  }
+
+  removePlantsInWorldRadius(centerX, centerZ, radius) {
+    const cx = Number(centerX)
+    const cz = Number(centerZ)
+    const r = Math.max(0, Number(radius) || 0)
+    if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(r > 0))
+      return 0
+    const r2 = r * r
+    return this.removePlantsInWorldBoxes([{
+      minX: cx - r,
+      maxX: cx + r,
+      minZ: cz - r,
+      maxZ: cz + r,
+      minY: -Infinity,
+      maxY: Infinity,
+    }])
+  }
+
   _key(chunkX, chunkZ) {
     return `${chunkX},${chunkZ}`
   }

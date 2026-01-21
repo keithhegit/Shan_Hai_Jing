@@ -1,31 +1,17 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import emitter from '../js/utils/event-bus.js'
 
-const maxHearts = ref(5)
-const currentHearts = ref(5)
 const staminaPercent = ref(100)
+const hp = ref(5)
+const maxHp = ref(5)
 const inventorySummary = ref({ backpackTotal: 0, warehouseTotal: 0, carriedPet: '' })
-
-const hpRatio = computed(() => {
-  const max = Math.max(1, Number(maxHearts.value) || 1)
-  const cur = Math.max(0, Math.min(max, Number(currentHearts.value) || 0))
-  return cur / max
-})
-
-const heartChar = computed(() => {
-  if (hpRatio.value <= 0.25)
-    return '💛'
-  if (hpRatio.value <= 0.5)
-    return '🧡'
-  return '❤️'
-})
 
 function updateStats(stats) {
   if (stats.hp !== undefined)
-    currentHearts.value = stats.hp
+    hp.value = Number(stats.hp) || 0
   if (stats.maxHp !== undefined)
-    maxHearts.value = stats.maxHp
+    maxHp.value = Number(stats.maxHp) || 0
   if (stats.stamina !== undefined)
     staminaPercent.value = stats.stamina
 }
@@ -47,34 +33,40 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="player-hud">
-    <!-- 血条 (红心) -->
-    <div class="hearts-container">
-      <div
-        v-for="i in maxHearts"
-        :key="i"
-        class="heart"
-        :class="{ lost: i > currentHearts }"
+    <div class="hp-hearts">
+      <svg
+        v-for="i in Math.max(0, Math.min(10, maxHp))"
+        :key="`hp:${i}`"
+        viewBox="0 0 24 24"
+        class="hp-heart"
+        :class="i <= hp ? 'filled' : 'empty'"
       >
-        {{ i > currentHearts ? '🖤' : heartChar }}
+        <path
+          d="M12 21s-6.7-4.4-9.6-8.1C.2 10.1 1 6.6 3.8 4.9c2.1-1.2 4.6-.7 6.1.9L12 7.9l2.1-2.1c1.5-1.6 4-2.1 6.1-.9 2.8 1.7 3.6 5.2 1.4 8-2.9 3.7-9.6 8.1-9.6 8.1Z"
+        />
+      </svg>
+      <div class="hp-text">
+        {{ hp }}/{{ maxHp }}
       </div>
     </div>
 
-    <!-- 体力条 (黄色进度条) -->
-    <div class="stamina-bar-bg">
-      <div class="stamina-bar-fill" :style="{ width: `${staminaPercent}%` }" />
-    </div>
-
-    <div class="inventory-summary">
-      <div class="inventory-row">
-        <span>背包</span>
-        <span>x{{ inventorySummary.backpackTotal }}</span>
-        <span class="sep">·</span>
-        <span>仓库</span>
-        <span>x{{ inventorySummary.warehouseTotal }}</span>
+    <div class="hud-center">
+      <div class="stamina-bar-bg">
+        <div class="stamina-bar-fill" :style="{ width: `${staminaPercent}%` }" />
       </div>
-      <div v-if="inventorySummary.carriedPet" class="inventory-row carried-row">
-        <span>携带</span>
-        <span class="carried-name">{{ inventorySummary.carriedPet }}</span>
+
+      <div class="inventory-summary">
+        <div class="inventory-row">
+          <span>背包</span>
+          <span>x{{ inventorySummary.backpackTotal }}</span>
+          <span class="sep">·</span>
+          <span>仓库</span>
+          <span>x{{ inventorySummary.warehouseTotal }}</span>
+        </div>
+        <div v-if="inventorySummary.carriedPet" class="inventory-row carried-row">
+          <span>携带</span>
+          <span class="carried-name">{{ inventorySummary.carriedPet }}</span>
+        </div>
       </div>
     </div>
   </div>
@@ -83,6 +75,12 @@ onBeforeUnmount(() => {
 <style scoped>
 .player-hud {
   position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hud-center {
+  position: absolute;
   top: 6.5rem;
   left: 50%;
   transform: translateX(-50%);
@@ -90,23 +88,41 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  pointer-events: none;
 }
 
-.hearts-container {
+.hp-hearts {
+  position: absolute;
+  top: 12px;
+  left: 12px;
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 
-.heart {
-  font-size: 24px;
-  filter: drop-shadow(0 2px 2px rgba(0,0,0,0.5));
-  transition: all 0.3s;
+.hp-heart {
+  width: 18px;
+  height: 18px;
 }
 
-.heart.lost {
-  filter: grayscale(1) brightness(0.5) opacity(0.5);
-  transform: scale(0.8);
+.hp-heart.filled {
+  fill: #d40027;
+}
+
+.hp-heart.empty {
+  fill: #0b0b0b;
+}
+
+.hp-text {
+  font-size: 12px;
+  opacity: 0.9;
+  margin-left: 4px;
 }
 
 .stamina-bar-bg {

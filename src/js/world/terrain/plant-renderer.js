@@ -96,7 +96,7 @@ export default class PlantRenderer {
       positions.forEach((pos, index) => {
         this._tempObject.position.set(
           pos.x, // center in block
-          (pos.y - 0.5) * this.params.heightScale, // align bottom with ground
+          (pos.y - 1) * this.params.heightScale + 0.5, // align bottom with ground
           pos.z, // center in block
         )
         this._tempObject.updateMatrix()

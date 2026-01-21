@@ -32,6 +32,7 @@ export default class World {
     this._dungeonState = null
     this._dungeonCompleted = false
     this._activeDungeonPortalId = null
+    this._dungeonSurfaceY = null
     this._portalDungeonProgress = this._loadPortalDungeonProgress()
     this._activeDungeonExit = null
     this._activeDungeonExitPrompt = null
@@ -61,11 +62,21 @@ export default class World {
     this._inventory = this._loadInventory()
     this._inventoryConfig = {
       backpack: { slots: 24, maxWeight: 60 },
+      grid: { cols: 8, rows: 6 },
+      itemSizes: {
+        canister_small: { w: 1, h: 1 },
+        canister_medium: { w: 1, h: 2 },
+        canister_large: { w: 2, h: 2 },
+      },
       itemWeights: {
         stone: 1,
         fence: 4,
+        coin: 0,
         crystal_big: 6,
         crystal_small: 3,
+        canister_small: 4,
+        canister_medium: 8,
+        canister_large: 16,
         material_gun: 2,
         Axe_Wood: 4,
         Axe_Stone: 5,
@@ -125,9 +136,24 @@ export default class World {
     this._materialGunLastDamageAt = 0
     this._materialGunBeam = null
     this._materialGunBeamPositions = new Float32Array(6)
+    this._captureBeam = null
+    this._captureBeamPositions = new Float32Array(6)
+    this._captureState = null
+    this._captureTarget = null
+    this._captureHolding = false
+    this._captureStartAt = 0
+    this._captureDurationMs = 4000
+    this._captureCooldownUntil = 0
+    this._canisterVisualGroup = null
+    this._heartHud = null
+    this._heartHudBase = null
+    this._heartHudBaseScale = 0.2
+    this._heartHudBasePos = new THREE.Vector3(0, -0.32, -1.0)
+    this._heartHudLowHp = false
     this._npcStats = this._createNpcStatsTable()
 
     this._initMaterialGunBeam()
+    this._initCaptureBeam()
 
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
@@ -150,6 +176,8 @@ export default class World {
 
       // Setup
       this.player = new Player()
+      this._initCanisterVisuals()
+      this._applyBurdenEffects()
 
       // Setup Camera Rig
       this.cameraRig = new CameraRig()
@@ -206,6 +234,21 @@ export default class World {
       }
       emitter.on('input:lock_on', this._onLockOn)
 
+      this._onCaptureInput = (payload) => {
+        const pressed = !!payload?.pressed
+        this._captureHolding = pressed
+        if (pressed)
+          this._tryStartCapture()
+        else
+          this._breakCapture({ reason: 'release', healTarget: false })
+      }
+      emitter.on('input:capture', this._onCaptureInput)
+
+      this._onPlayerDamaged = () => {
+        this._breakCapture({ reason: 'damaged', healTarget: true })
+      }
+      emitter.on('combat:player_damaged', this._onPlayerDamaged)
+
       this._onPunchStraight = () => {
         if (this.player?.isBlocking || !!this.player?.inputState?.c)
           return
@@ -239,6 +282,13 @@ export default class World {
           return
         if (this._activeInteractable) {
           if (this._activeInteractable.pickupItemId) {
+            if (this._activeInteractable.read) {
+              this._activeInteractableId = null
+              this._activeInteractable = null
+              emitter.emit('interactable:prompt_clear')
+              emitter.emit('portal:prompt_clear')
+              return
+            }
             const itemId = this._activeInteractable.pickupItemId
             const count = Math.max(1, Math.floor(Number(this._activeInteractable.pickupAmount) || 1))
             if (this._canAddToBackpack(itemId, count)) {
@@ -246,6 +296,10 @@ export default class World {
               emitter.emit('dungeon:toast', { text: `获得：${this._getModelFilenameByResourceKey(itemId)} x${count}（已放入背包）` })
             }
             else {
+              if (this.currentWorld === 'dungeon') {
+                emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(itemId)} x${count}` })
+                return
+              }
               this._addInventoryItem('warehouse', itemId, count)
               emitter.emit('dungeon:toast', { text: `背包已满或超重：${this._getModelFilenameByResourceKey(itemId)} x${count}（已入库）` })
             }
@@ -264,6 +318,9 @@ export default class World {
             this._scheduleInventorySave()
             this._emitInventorySummary()
             this._emitInventoryState()
+            this._activeInteractable.range = 0
+            this._activeInteractableId = null
+            this._activeInteractable = null
             emitter.emit('interactable:prompt_clear')
             emitter.emit('portal:prompt_clear')
             return
@@ -408,7 +465,7 @@ export default class World {
       emitter.on('game:resume', this._onResume)
 
       this._onToggleBackpack = () => {
-        this._toggleInventoryPanel('backpack')
+        this._toggleBackpackPanel()
       }
       this._onToggleWarehouse = () => {
         this._toggleInventoryPanel('warehouse')
@@ -514,6 +571,396 @@ export default class World {
     beam.visible = false
     this._materialGunBeam = beam
     this.scene.add(beam)
+  }
+
+  _initCaptureBeam() {
+    const radius = 0.07
+    const geo = new THREE.CylinderGeometry(radius, radius, 1, 10, 1, true)
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x66FFAA,
+      transparent: true,
+      opacity: 0.85,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    })
+    const beam = new THREE.Mesh(geo, mat)
+    beam.frustumCulled = false
+    beam.visible = false
+    this._captureBeam = beam
+    this.scene.add(beam)
+  }
+
+  _initCanisterVisuals() {
+    if (!this.player?.movement?.group)
+      return
+    if (this._canisterVisualGroup)
+      this._canisterVisualGroup.removeFromParent?.()
+    this._canisterVisualGroup = new THREE.Group()
+    this._canisterVisualGroup.frustumCulled = false
+    const anchor = this._findPlayerBackAnchor() || this.player.movement.group
+    anchor.add(this._canisterVisualGroup)
+    this._updateCanisterVisuals()
+  }
+
+  _findPlayerBackAnchor() {
+    const root = this.player?.model
+    if (!root)
+      return null
+    const candidates = []
+    root.traverse((obj) => {
+      if (!obj)
+        return
+      const name = String(obj.name || '').toLowerCase()
+      if (!name)
+        return
+      if (name.includes('uppertorso') || name.includes('torso') || name.includes('chest') || name.includes('spine'))
+        candidates.push(obj)
+    })
+    if (candidates.length === 0)
+      return null
+    candidates.sort((a, b) => String(a.name || '').length - String(b.name || '').length)
+    return candidates[0]
+  }
+
+  _updateCanisterVisuals() {
+    if (!this._canisterVisualGroup)
+      return
+    const items = this._getBagItems('backpack')
+    const small = Math.max(0, Math.floor(Number(items.canister_small) || 0))
+    const medium = Math.max(0, Math.floor(Number(items.canister_medium) || 0))
+    const large = Math.max(0, Math.floor(Number(items.canister_large) || 0))
+    const total = small + medium + large
+
+    const gltf = this.resources?.items?.canister
+    const scene = gltf?.scene || null
+
+    this._canisterVisualGroup.clear?.()
+    if (!scene || total <= 0)
+      return
+
+    const list = []
+    for (let i = 0; i < small; i++)
+      list.push({ type: 'small', scale: 0.18, z: 0.16 })
+    for (let i = 0; i < medium; i++)
+      list.push({ type: 'medium', scale: 0.22, z: 0.22 })
+    for (let i = 0; i < large; i++)
+      list.push({ type: 'large', scale: 0.28, z: 0.3 })
+
+    let zAccum = 0
+    for (let i = 0; i < list.length; i++) {
+      const entry = list[i]
+      const obj = scene.clone(true)
+      obj.traverse((child) => {
+        if (!child?.isMesh)
+          return
+        child.castShadow = true
+        child.receiveShadow = true
+        child.frustumCulled = false
+        if (child.material) {
+          child.material.transparent = true
+          child.material.depthWrite = false
+        }
+      })
+      obj.rotation.y = Math.PI
+      obj.position.set(0, 1.22, -(0.28 + zAccum))
+      obj.scale.setScalar(entry.scale)
+      zAccum += entry.z
+      this._canisterVisualGroup.add(obj)
+    }
+  }
+
+  _initHeartHud() {
+    const camera = this.experience?.camera?.instance
+    if (!camera)
+      return
+    const gltf = this.resources?.items?.heart_ui
+    const heartScene = gltf?.scene
+    if (!heartScene)
+      return
+
+    if (this._heartHud)
+      this._heartHud.removeFromParent?.()
+
+    const root = new THREE.Group()
+    root.position.copy(this._heartHudBasePos)
+    root.frustumCulled = false
+
+    const base = heartScene.clone(true)
+    base.traverse((child) => {
+      if (!child?.isMesh)
+        return
+      child.frustumCulled = false
+      child.castShadow = false
+      child.receiveShadow = false
+      if (child.material) {
+        child.material.transparent = true
+        child.material.depthWrite = false
+      }
+    })
+    base.scale.setScalar(this._heartHudBaseScale)
+    root.add(base)
+
+    camera.add(root)
+    this._heartHud = root
+    this._heartHudBase = base
+  }
+
+  _updateHeartHud() {
+    if (!this._heartHud || !this._heartHudBase || !this.player)
+      return
+    const hp = Math.max(0, Number(this.player.hp) || 0)
+    const maxHp = Math.max(1, Number(this.player.maxHp) || 1)
+    const ratio = Math.max(0, Math.min(1, hp / maxHp))
+
+    const bpm = 60 + (1 - ratio) * 120
+    const phase = (this.experience.time.elapsed ?? 0) * 0.001 * (bpm / 60) * Math.PI * 2
+    const pulse = 1 + Math.sin(phase) * 0.11
+    this._heartHudBase.scale.setScalar(this._heartHudBaseScale * pulse)
+
+    const low = ratio < 0.3
+    if (low !== this._heartHudLowHp) {
+      this._heartHudLowHp = low
+      this._heartHudBase.traverse((child) => {
+        if (!child?.isMesh)
+          return
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const mat of mats) {
+          if (!mat)
+            continue
+          if (!mat.userData)
+            mat.userData = {}
+          if (!mat.userData._origColor && mat.color)
+            mat.userData._origColor = mat.color.clone()
+        }
+      })
+    }
+
+    const basePos = this._heartHudBasePos
+    if (low) {
+      const shake = 0.006 + (1 - ratio) * 0.014
+      this._heartHud.position.set(
+        basePos.x + (Math.random() - 0.5) * shake,
+        basePos.y + (Math.random() - 0.5) * shake,
+        basePos.z,
+      )
+      this._heartHudBase.traverse((child) => {
+        if (!child?.isMesh)
+          return
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const mat of mats) {
+          if (!mat?.color)
+            continue
+          mat.color.setHex(0x330000)
+          if (mat.emissive)
+            mat.emissive.setHex(0x110000)
+          if (mat.emissiveIntensity !== undefined)
+            mat.emissiveIntensity = 0.6
+        }
+      })
+    }
+    else {
+      this._heartHud.position.copy(basePos)
+      this._heartHudBase.traverse((child) => {
+        if (!child?.isMesh)
+          return
+        const mats = Array.isArray(child.material) ? child.material : [child.material]
+        for (const mat of mats) {
+          if (!mat)
+            continue
+          if (mat.userData?._origColor && mat.color)
+            mat.color.copy(mat.userData._origColor)
+          if (mat.emissive)
+            mat.emissive.setHex(0x000000)
+          if (mat.emissiveIntensity !== undefined)
+            mat.emissiveIntensity = 0
+        }
+      })
+    }
+  }
+
+  _getCaptureCandidate() {
+    if (!this._lockedEnemy || this._lockedEnemy.isDead)
+      return null
+    if (this.currentWorld !== 'dungeon')
+      return null
+    const target = this._lockedEnemy
+    const ratio = (target.maxHp || 1) > 0 ? (target.hp / target.maxHp) : 0
+    if (ratio > 0.15)
+      return null
+    if (!target.isStunned?.())
+      return null
+    return target
+  }
+
+  _tryStartCapture() {
+    const now = this.experience.time?.elapsed ?? 0
+    if (this.isPaused)
+      return
+    if (!this.player)
+      return
+    if (this._captureTarget || this._captureState)
+      return
+    if (now < (this._captureCooldownUntil ?? 0))
+      return
+
+    const target = this._getCaptureCandidate()
+    if (!target)
+      return
+
+    this._captureTarget = target
+    this._captureStartAt = now
+    this._captureState = 'channeling'
+
+    this.player.setControlLocked?.(true)
+    this.player.setSpeedMultiplier?.(0)
+    this.player.setSprintDisabled?.(true)
+
+    if (this._captureBeam)
+      this._captureBeam.visible = true
+  }
+
+  _breakCapture({ reason, healTarget } = {}) {
+    if (!this._captureTarget || !this._captureState)
+      return
+    const now = this.experience.time?.elapsed ?? 0
+    const target = this._captureTarget
+    this._captureTarget = null
+    this._captureState = null
+    this._captureStartAt = 0
+    this._captureCooldownUntil = now + 700
+
+    if (this._captureBeam)
+      this._captureBeam.visible = false
+
+    this.player?.setControlLocked?.(false)
+    this._applyBurdenEffects()
+
+    if (healTarget && target?.heal && !target.isDead) {
+      const heal = Math.max(1, Math.ceil((target.maxHp || 1) * 0.1))
+      target.heal(heal)
+      emitter.emit('dungeon:toast', { text: '捕捉中断：目标恢复' })
+      return
+    }
+    if (reason === 'release')
+      emitter.emit('dungeon:toast', { text: '捕捉取消' })
+  }
+
+  _completeCapture() {
+    const target = this._captureTarget
+    if (!target)
+      return
+    const now = this.experience.time?.elapsed ?? 0
+    this._captureTarget = null
+    this._captureState = null
+    this._captureStartAt = 0
+    this._captureCooldownUntil = now + 1200
+
+    if (this._captureBeam)
+      this._captureBeam.visible = false
+
+    this.player?.setControlLocked?.(false)
+
+    if (!target.isDead) {
+      target.die?.()
+    }
+
+    const canisterId = this._pickCanisterIdForTarget(target)
+    if (canisterId) {
+      this._addInventoryItem('backpack', canisterId, 1)
+      emitter.emit('dungeon:toast', { text: `获得：${canisterId}` })
+    }
+
+    this._applyBurdenEffects()
+    this._updateCanisterVisuals()
+  }
+
+  _pickCanisterIdForTarget(target) {
+    if (!target)
+      return 'canister_small'
+    const maxHp = Number(target.maxHp) || 0
+    if (maxHp >= 14)
+      return 'canister_large'
+    if (maxHp >= 7)
+      return 'canister_medium'
+    return 'canister_small'
+  }
+
+  _updateCaptureBeam() {
+    if (!this._captureBeam || !this._captureTarget || !this.player)
+      return
+    const muzzle = this.player.getMatterGunMuzzleWorldPosition?.()
+    const start = muzzle || new THREE.Vector3(this.player.getPosition().x, this.player.getPosition().y + 1.35, this.player.getPosition().z)
+    const end = this._getEnemyLockTargetPos(this._captureTarget)
+      || new THREE.Vector3(this._captureTarget.group.position.x, this._captureTarget.group.position.y + 1.35, this._captureTarget.group.position.z)
+
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const dz = end.z - start.z
+    const d2 = dx * dx + dy * dy + dz * dz
+    const len = Math.sqrt(Math.max(0.000001, d2))
+    const mid = new THREE.Vector3(
+      (start.x + end.x) * 0.5,
+      (start.y + end.y) * 0.5,
+      (start.z + end.z) * 0.5,
+    )
+    const dir = new THREE.Vector3(dx, dy, dz).multiplyScalar(1 / len)
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
+    this._captureBeam.position.copy(mid)
+    this._captureBeam.quaternion.copy(q)
+    this._captureBeam.scale.set(1, len, 1)
+    this._captureBeam.visible = true
+  }
+
+  _updateCapture() {
+    if (!this._captureState || !this._captureTarget) {
+      if (this._captureBeam)
+        this._captureBeam.visible = false
+      return
+    }
+    if (!this._captureHolding) {
+      this._breakCapture({ reason: 'release', healTarget: false })
+      return
+    }
+
+    const target = this._captureTarget
+    if (target.isDead || !target.group) {
+      this._breakCapture({ reason: 'invalid', healTarget: false })
+      return
+    }
+
+    const now = this.experience.time?.elapsed ?? 0
+    const ratio = (target.maxHp || 1) > 0 ? (target.hp / target.maxHp) : 0
+    if (ratio > 0.15 || !target.isStunned?.(now)) {
+      this._breakCapture({ reason: 'invalid', healTarget: false })
+      return
+    }
+
+    this._updateCaptureBeam()
+
+    const p = this.player.getPosition()
+    const epos = new THREE.Vector3()
+    target.group.getWorldPosition(epos)
+    const dx = epos.x - p.x
+    const dz = epos.z - p.z
+    const desired = this._getFacingTo(dx, dz)
+    this.player.setFacing?.(desired)
+
+    if (now - (this._captureStartAt ?? 0) >= this._captureDurationMs) {
+      this._completeCapture()
+    }
+  }
+
+  _applyBurdenEffects() {
+    if (!this.player)
+      return
+    const items = this._getBagItems('backpack')
+    const medium = Math.max(0, Math.floor(Number(items.canister_medium) || 0))
+    const large = Math.max(0, Math.floor(Number(items.canister_large) || 0))
+    const penalty = medium * 0.1 + large * 0.25
+    const multiplier = Math.max(0.25, 1 - penalty)
+    this.player.setSpeedMultiplier?.(multiplier)
+    this.player.setSprintDisabled?.(large > 0)
   }
 
   _ensureStarterMatterGun() {
@@ -690,7 +1137,7 @@ export default class World {
     let bestD2 = Infinity
     const maxD2 = maxDistance * maxDistance
     for (const enemy of this._dungeonEnemies) {
-      if (!enemy?.group)
+      if (!enemy?.group || enemy.isDead)
         continue
       const epos = new THREE.Vector3()
       enemy.group.getWorldPosition(epos)
@@ -714,8 +1161,6 @@ export default class World {
       return
     if (!this.player)
       return
-    if (this._activeInteractableId !== null)
-      return
 
     if (this._lockedEnemy) {
       this._lockedEnemy.setLocked?.(false)
@@ -733,6 +1178,16 @@ export default class World {
     this._lockedEnemy.setLocked?.(true)
     emitter.emit('combat:toggle_lock', enemy.group)
     emitter.emit('combat:lock', { title: '已锁定', hint: '中键解除' })
+
+    const p = this.player.getPosition()
+    const epos = new THREE.Vector3()
+    enemy.group.getWorldPosition(epos)
+    const dx = epos.x - p.x
+    const dz = epos.z - p.z
+    const desired = this._getFacingTo(dx, dz)
+    this.player.setFacing(desired)
+    if (typeof this.player.targetFacingAngle === 'number')
+      this.player.targetFacingAngle = desired
   }
 
   _updateLockOn() {
@@ -771,10 +1226,16 @@ export default class World {
       return
     }
 
-    const desired = Math.atan2(dx, dz)
+    const desired = this._getFacingTo(dx, dz)
     const current = this.player.getFacingAngle()
-    const next = this._lerpAngle(current, desired, 0.12)
+    const next = this._lerpAngle(current, desired, this._isMaterialGunFiring ? 0.35 : 0.12)
     this.player.setFacing(next)
+    if (typeof this.player.targetFacingAngle === 'number')
+      this.player.targetFacingAngle = next
+  }
+
+  _getFacingTo(dx, dz) {
+    return Math.atan2(-dx, -dz)
   }
 
   _lerpAngle(current, target, t) {
@@ -977,12 +1438,25 @@ export default class World {
     return String(name).replace(/\.(?:gltf|glb)$/i, '')
   }
 
-  _getRequiredKeyForPortalChest(portalId) {
+  _getPortalChestType(portalId) {
     if (!portalId)
       return null
-    if (portalId !== 'plains' && portalId !== 'snow' && portalId !== 'desert' && portalId !== 'forest')
+    if (portalId === 'plains')
+      return 'snow'
+    if (portalId === 'snow')
+      return 'desert'
+    if (portalId === 'desert')
+      return 'forest'
+    if (portalId === 'forest')
+      return 'plains'
+    return null
+  }
+
+  _getRequiredKeyForPortalChest(portalId) {
+    const chestType = this._getPortalChestType(portalId)
+    if (!chestType)
       return null
-    return `key_${portalId}`
+    return `key_${chestType}`
   }
 
   _getLockedChestPool() {
@@ -1455,7 +1929,87 @@ export default class World {
         weight: this._getBagWeight(backpackItems),
         maxWeight: this._getBackpackMaxWeight(),
       },
+      grid: { ...(this._inventoryConfig?.grid || { cols: 8, rows: 6 }) },
+      itemSizes: { ...(this._inventoryConfig?.itemSizes || {}) },
+      backpackGrid: this._buildBackpackGridSnapshot(backpackItems),
     })
+  }
+
+  _buildBackpackGridSnapshot(items) {
+    const cfg = this._inventoryConfig?.grid || { cols: 8, rows: 6 }
+    const cols = Math.max(1, Math.floor(Number(cfg.cols) || 8))
+    const rows = Math.max(1, Math.floor(Number(cfg.rows) || 6))
+    const sizes = this._inventoryConfig?.itemSizes || {}
+
+    const cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => null))
+    const placed = []
+    const overflow = []
+
+    const expanded = []
+    let seq = 1
+    for (const [id, count] of Object.entries(items || {})) {
+      const n = Math.max(0, Math.floor(Number(count) || 0))
+      if (n <= 0)
+        continue
+      const size = sizes?.[id] || { w: 1, h: 1 }
+      const w = Math.max(1, Math.floor(Number(size.w) || 1))
+      const h = Math.max(1, Math.floor(Number(size.h) || 1))
+      for (let i = 0; i < n; i++) {
+        expanded.push({
+          uid: `${id}:${seq++}`,
+          itemId: id,
+          w,
+          h,
+        })
+      }
+    }
+
+    const canFitAt = (uid, x, y, w, h) => {
+      if (x < 0 || y < 0 || x + w > cols || y + h > rows)
+        return false
+      for (let yy = y; yy < y + h; yy++) {
+        for (let xx = x; xx < x + w; xx++) {
+          const v = cells[yy][xx]
+          if (v && v !== uid)
+            return false
+        }
+      }
+      return true
+    }
+
+    const fill = (uid, x, y, w, h, value) => {
+      for (let yy = y; yy < y + h; yy++) {
+        for (let xx = x; xx < x + w; xx++) {
+          cells[yy][xx] = value
+        }
+      }
+    }
+
+    for (const item of expanded) {
+      let found = null
+      for (let y = 0; y < rows && !found; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (canFitAt(item.uid, x, y, item.w, item.h)) {
+            found = { x, y, w: item.w, h: item.h, rotated: false }
+            break
+          }
+        }
+      }
+      if (!found) {
+        overflow.push({ ...item, x: -1, y: -1, rotated: false })
+        continue
+      }
+      fill(item.uid, found.x, found.y, found.w, found.h, item.uid)
+      placed.push({ ...item, ...found })
+    }
+
+    return {
+      cols,
+      rows,
+      cells,
+      items: placed,
+      overflow,
+    }
   }
 
   _toggleInventoryPanel(panel) {
@@ -1464,6 +2018,8 @@ export default class World {
         this._closeInventoryPanel()
         return
       }
+      if (panel === 'warehouse' && (this.currentWorld !== 'hub' || this._activeInteractable?.id !== 'warehouse'))
+        return
       this._activeInventoryPanel = panel
       this._emitInventoryState()
       emitter.emit('inventory:open', { panel })
@@ -1471,7 +2027,19 @@ export default class World {
     }
     if (this.isPaused)
       return
+    if (panel === 'warehouse' && (this.currentWorld !== 'hub' || this._activeInteractable?.id !== 'warehouse'))
+      return
     this._openInventoryPanel(panel)
+  }
+
+  _toggleBackpackPanel() {
+    if (this._activeInventoryPanel) {
+      this._closeInventoryPanel()
+      return
+    }
+    if (this.isPaused)
+      return
+    this._openInventoryPanel('backpack')
   }
 
   _openInventoryPanel(panel) {
@@ -1505,6 +2073,8 @@ export default class World {
     items[itemId] = (items[itemId] || 0) + delta
     this._emitInventorySummary()
     this._emitInventoryState()
+    this._updateCanisterVisuals()
+    this._applyBurdenEffects()
     this._scheduleInventorySave()
   }
 
@@ -1523,6 +2093,8 @@ export default class World {
       items[itemId] = next
     this._emitInventorySummary()
     this._emitInventoryState()
+    this._updateCanisterVisuals()
+    this._applyBurdenEffects()
     this._scheduleInventorySave()
     return true
   }
@@ -1533,6 +2105,8 @@ export default class World {
     const itemId = payload?.itemId
     const amount = payload?.amount ?? 1
     if (!from || !to || from === to || !itemId)
+      return
+    if ((from === 'warehouse' || to === 'warehouse') && (this.currentWorld !== 'hub' || this._activeInventoryPanel !== 'warehouse' || this._activeInteractable?.id !== 'warehouse'))
       return
     const delta = Math.max(0, Math.floor(Number(amount) || 0))
     if (to === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
@@ -1546,6 +2120,8 @@ export default class World {
   }
 
   _getSurfaceY(worldX, worldZ) {
+    if (this.currentWorld === 'dungeon' && Number.isFinite(Number(this._dungeonSurfaceY)))
+      return Number(this._dungeonSurfaceY)
     const topY = this.chunkManager?.getTopSolidYWorld?.(worldX, worldZ)
     if (typeof topY !== 'number' || Number.isNaN(topY))
       return 10
@@ -2146,30 +2722,49 @@ export default class World {
     // 不再需要 BoxGeometry 的墙壁，因为已经生成了方块
     // 只需要生成 Exit 标记和 Enemy/Interactables
 
-    const { spawn, exit, enemies, interactables, reward } = dungeonInfo
+    const { surfaceY, spawn, exit, enemies, interactables, reward } = dungeonInfo
 
     // Exit Mesh (保持视觉标记)
-    const exitGeometry = new THREE.TorusGeometry(1.15, 0.18, 16, 48)
+    const exitGeometry = new THREE.TorusGeometry(1.55, 0.22, 16, 48)
     const exitMaterial = new THREE.MeshBasicMaterial({
       color: 0xFF_FF_FF,
       transparent: true,
       opacity: 0.95,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
     })
     const exitMesh = new THREE.Mesh(exitGeometry, exitMaterial)
-    // 稍微浮空一点
-    exitMesh.position.set(exit.x, exit.y + 1.2, exit.z)
     exitMesh.rotation.x = Math.PI / 2
-    this._dungeonGroup.add(exitMesh)
+
+    const beamGeo = new THREE.CylinderGeometry(0.55, 0.55, 7.5, 12, 1, true)
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0xFF_FF_FF,
+      transparent: true,
+      opacity: 0.28,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    })
+    const exitBeam = new THREE.Mesh(beamGeo, beamMat)
+
+    const exitLight = new THREE.PointLight(0xFF_FF_FF, 1.35, 14, 1.4)
+
+    const exitGroup = new THREE.Group()
+    exitGroup.position.set(exit.x, exit.y, exit.z)
+    exitMesh.position.set(0, 1.2, 0)
+    exitBeam.position.set(0, 4.2, 0)
+    exitLight.position.set(0, 3.0, 0)
+    exitGroup.add(exitMesh, exitBeam, exitLight)
+    this._dungeonGroup.add(exitGroup)
 
     this._dungeonExit = {
-      mesh: exitMesh,
+      mesh: exitGroup,
       x: exit.x,
       z: exit.z,
       range: 3,
     }
     if (portal.id === 'mine') {
-      exitMesh.position.set(spawn.x, spawn.y + 1.2, spawn.z)
+      exitGroup.position.set(spawn.x, spawn.y, spawn.z)
       this._dungeonExit.x = spawn.x
       this._dungeonExit.z = spawn.z
       this._dungeonExit.range = 3.5
@@ -2182,6 +2777,7 @@ export default class World {
     this._activeDungeonPortalId = portal.id
     this._dungeonRewardPending = reward || null
     this._dungeonRewardSpawned = false
+    this._dungeonSurfaceY = Number.isFinite(Number(surfaceY)) ? (Number(surfaceY) + 0.05) : null
 
     // 初始化交互物 (使用 generator 返回的位置)
     this._initDungeonInteractablesV2(interactables, portal.id)
@@ -2219,42 +2815,33 @@ export default class World {
     this._dungeonEnemies = []
 
     // 生成敌人
-    if (portal.id !== 'mine') {
-      enemies.forEach((pos) => {
-        // 根据地牢类型选择敌人类型 (TODO: Move logic to a helper or config)
-        let enemyType = 'skeleton'
-        if (portal.id === 'snow')
-          enemyType = 'yeti'
-        else if (portal.id === 'plains')
-          enemyType = 'goblin'
-        else if (portal.id === 'desert')
-          enemyType = 'skeleton_armor'
-        else if (portal.id === 'forest')
-          enemyType = 'zombie'
+    enemies.forEach((pos) => {
+      const isBoss = !!pos.isBoss
+      const enemyType = String(pos?.type || '').trim() || 'skeleton'
+      const hp = Number.isFinite(Number(pos?.hp)) ? Number(pos.hp) : (isBoss ? 12 : 4)
+      const baseScale = Number.isFinite(Number(pos?.scale)) ? Number(pos.scale) : (isBoss ? 1.15 : 1)
+      const scale = baseScale * (isBoss ? (2 / 3) : 0.5)
 
-        // 临时使用 HumanoidEnemy (稍后改造)
-        const isBoss = !!pos.isBoss
-        const enemy = new HumanoidEnemy({
-          position: new THREE.Vector3(pos.x, pos.y + 0.1, pos.z), // 稍微抬高
-          rotationY: Math.random() * Math.PI * 2,
-          scale: isBoss ? 1.15 : 1,
-          colors: { accent: portal.color },
-          type: enemyType, // 传递类型
-          hp: isBoss ? 12 : 4,
-        })
-        enemy.isBoss = isBoss
-        enemy.behavior = {
-          state: 'walk',
-          timer: 2 + Math.random() * 2,
-          home: { x: pos.x, z: pos.z },
-          radius: 4 + Math.random() * 2,
-          targetDir: enemy.group.rotation.y,
-        }
-        enemy.playLocomotion?.()
-        enemy.addTo(this._dungeonEnemiesGroup)
-        this._dungeonEnemies.push(enemy)
+      const enemy = new HumanoidEnemy({
+        position: new THREE.Vector3(pos.x, pos.y + 0.1, pos.z),
+        rotationY: Math.random() * Math.PI * 2,
+        scale,
+        colors: { accent: portal.color },
+        type: enemyType,
+        hp,
       })
-    }
+      enemy.isBoss = isBoss
+      enemy.behavior = {
+        state: 'walk',
+        timer: 2 + Math.random() * 2,
+        home: { x: pos.x, z: pos.z },
+        radius: 4 + Math.random() * 2,
+        targetDir: enemy.group.rotation.y,
+      }
+      enemy.playLocomotion?.()
+      enemy.addTo(this._dungeonEnemiesGroup)
+      this._dungeonEnemies.push(enemy)
+    })
 
     this._activePortalId = null
     this._activePortal = null
@@ -2295,13 +2882,13 @@ export default class World {
     emitter.emit('loading:show', { title: '正在返回：超平坦世界' })
 
     setTimeout(() => {
+      this.currentWorld = 'hub'
       const { x, z } = this._hubCenter
       this.chunkManager.updateStreaming({ x, z }, true)
       this.chunkManager.pumpIdleQueue()
       const y = this._getSurfaceY(x, z)
       this.player.teleportTo(x, y + 1.1, z)
 
-      this.currentWorld = 'hub'
       if (this.player?.movement?.config?.respawn?.position && this._savedRespawnPosition) {
         this.player.movement.config.respawn.position = { ...this._savedRespawnPosition }
         this._savedRespawnPosition = null
@@ -2318,6 +2905,7 @@ export default class World {
       this._dungeonProgress = null
       this._dungeonCompleted = false
       this._activeDungeonPortalId = null
+      this._dungeonSurfaceY = null
       this._activeDungeonExitPrompt = null
       this._lockedEnemy = null
       this._dungeonRewardPending = null
@@ -2494,13 +3082,14 @@ export default class World {
     if (chestPortalIds.has(portalId)) {
       const pos = dungeonPositions[0] || { x: 0, y: 0, z: 0 }
       const chestId = `portal-chest-${portalId}`
+      const chestType = this._getPortalChestType(portalId) || portalId
       const requiredKeyId = this._getRequiredKeyForPortalChest(portalId)
       const state = this._lockedChests?.[chestId] || {}
       const unlocked = !!state.unlocked
       const looted = !!state.looted
       list.push({
         id: chestId,
-        title: chestTitles?.[portalId] || '宝箱',
+        title: chestTitles?.[chestType] || '宝箱',
         description: requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : '需要钥匙解锁',
         hint: looted ? '已开启' : (unlocked ? '按 E 打开宝箱' : '按 E 解锁宝箱'),
         lockedChestId: chestId,
@@ -2528,21 +3117,23 @@ export default class World {
     }
 
     this._dungeonInteractables = list.map((item) => {
-      if (item.lockedChestId && item.looted) {
-        return {
-          ...item,
-          mesh: null,
-          outline: null,
-          hitRadius: 0,
-          range: 0,
-          read: true,
-          spinSpeed: 0,
-          parentGroup: this._dungeonInteractablesGroup,
+      if (item.lockedChestId) {
+        const baseY = Math.floor(Number(item.y) || 0)
+        const cx = Math.floor(Number(item.x) || 0)
+        const cz = Math.floor(Number(item.z) || 0)
+        for (let dy = 1; dy <= 12; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            for (let dz = -2; dz <= 2; dz++) {
+              this.chunkManager?.removeBlockWorld?.(cx + dx, baseY + dy, cz + dz)
+            }
+          }
         }
       }
 
       let mesh
-      const resource = this.resources.items.chest_closed
+      const resource = item.lockedChestId && item.looted
+        ? (this.resources.items.chest_open || this.resources.items.chest_closed)
+        : this.resources.items.chest_closed
       if (resource?.scene) {
         mesh = resource.scene.clone()
         mesh.scale.set(0.5, 0.5, 0.5)
@@ -2554,6 +3145,8 @@ export default class World {
       }
 
       mesh.position.set(item.x, (item.y ?? 0) + 0.5, item.z)
+      if (item.lockedChestId)
+        mesh.renderOrder = 4
       this._dungeonInteractablesGroup.add(mesh)
 
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
@@ -2603,6 +3196,8 @@ export default class World {
     let best = null
     let bestD2 = Infinity
     for (const item of this._dungeonInteractables) {
+      if (!(Number(item?.range) > 0))
+        continue
       const dx = pos.x - item.x
       const dz = pos.z - item.z
       const d2 = dx * dx + dz * dz
@@ -2622,7 +3217,7 @@ export default class World {
         emitter.emit('interactable:prompt', { title: best.title, hint })
       }
     }
-    else if (this._activeInteractableId !== null && this._activeInteractable && this._activeInteractableId.startsWith('dungeon-')) {
+    else if (this._activeInteractableId !== null && this._activeInteractable) {
       this._activeInteractableId = null
       this._activeInteractable = null
       emitter.emit('interactable:prompt_clear')
@@ -3360,6 +3955,10 @@ export default class World {
         if (!this._dungeonRewardSpawned)
           this._spawnDungeonReward()
       }
+      if (enemy && !enemy.isBoss && enemy.isDead && !enemy._coinDropped) {
+        enemy._coinDropped = true
+        this._spawnDungeonCoinDrop(enemy)
+      }
       if (enemy?.isDead)
         continue
 
@@ -3406,6 +4005,8 @@ export default class World {
           const pos = enemy.group.position
           const groundY = this._getSurfaceY(pos.x, pos.z)
           enemy.group.position.y += (groundY - enemy.group.position.y) * 0.18
+          if (this.currentWorld === 'dungeon' && Number.isFinite(Number(this._dungeonSurfaceY)))
+            enemy.group.position.y = Number(this._dungeonSurfaceY)
           continue
         }
       }
@@ -3444,8 +4045,72 @@ export default class World {
 
         const groundY = this._getSurfaceY(pos.x, pos.z)
         enemy.group.position.y += (groundY - enemy.group.position.y) * 0.15
+        if (this.currentWorld === 'dungeon' && Number.isFinite(Number(this._dungeonSurfaceY)))
+          enemy.group.position.y = Number(this._dungeonSurfaceY)
       }
     }
+  }
+
+  _spawnDungeonCoinDrop(enemy) {
+    if (this.currentWorld !== 'dungeon')
+      return
+    if (!enemy?.group)
+      return
+    if (!this._dungeonInteractables)
+      this._dungeonInteractables = []
+    if (!this._dungeonInteractablesGroup) {
+      this._dungeonInteractablesGroup = new THREE.Group()
+      this._dungeonGroup?.add?.(this._dungeonInteractablesGroup)
+    }
+
+    const portalId = this._activeDungeonPortalId || 'dungeon'
+    const index = this._dungeonInteractables.length
+    const id = `coin-${portalId}-${index}`
+
+    const pos = new THREE.Vector3()
+    enemy.group.getWorldPosition(pos)
+    const x = pos.x
+    const z = pos.z
+    const y = this._getSurfaceY(x, z)
+
+    let mesh = null
+    const resource = this.resources.items.coin
+    if (resource?.scene) {
+      mesh = resource.scene.clone(true)
+      mesh.scale.setScalar(0.65)
+    }
+    else {
+      mesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 0.06, 16),
+        new THREE.MeshStandardMaterial({ color: 0xFFCC33, roughness: 0.35, metalness: 0.25, emissive: 0x332200, emissiveIntensity: 0.2 }),
+      )
+    }
+    mesh.position.set(x, y + 0.6, z)
+    mesh.traverse?.((child) => {
+      if (child?.isMesh) {
+        child.castShadow = true
+        child.receiveShadow = true
+      }
+    })
+    this._dungeonInteractablesGroup.add(mesh)
+
+    const hitRadius = this._getHitRadiusFromObject(mesh, 0.55)
+    this._dungeonInteractables.push({
+      id,
+      title: '金币',
+      description: '战利品。可作为后续消耗性资源。',
+      hint: '按 E 拾取',
+      pickupItemId: 'coin',
+      pickupAmount: 1,
+      x,
+      y,
+      z,
+      mesh,
+      hitRadius,
+      range: 2.8,
+      read: false,
+      spinSpeed: 0.04,
+    })
   }
 
   _updatePortals() {
@@ -3586,6 +4251,7 @@ export default class World {
     if (this.currentWorld === 'hub')
       this._updateLockOn()
     this._updateMaterialGun()
+    this._updateCapture()
     this._updateNameLabelVisibility()
   }
 
@@ -3820,6 +4486,14 @@ export default class World {
       emitter.off('input:toggle_block_edit_mode', this._onToggleBlockEditMode)
     if (this._onMouseDown)
       emitter.off('input:mouse_down', this._onMouseDown)
+    if (this._onMouseUp)
+      emitter.off('input:mouse_up', this._onMouseUp)
+    if (this._onLockOn)
+      emitter.off('input:lock_on', this._onLockOn)
+    if (this._onCaptureInput)
+      emitter.off('input:capture', this._onCaptureInput)
+    if (this._onPlayerDamaged)
+      emitter.off('combat:player_damaged', this._onPlayerDamaged)
     if (this._inventorySaveTimer)
       clearTimeout(this._inventorySaveTimer)
     if (this._lockedChestsSaveTimer)
@@ -3861,8 +4535,8 @@ export default class World {
       return true
 
     const facing = this.player.getFacingAngle?.() ?? 0
-    const fx = Math.sin(facing)
-    const fz = Math.cos(facing)
+    const fx = -Math.sin(facing)
+    const fz = -Math.cos(facing)
 
     const nx = dx / len
     const nz = dz / len
@@ -3880,8 +4554,8 @@ export default class World {
     let bestD2 = Infinity
     const p = this.player.getPosition()
     const facing = this.player.getFacingAngle?.() ?? 0
-    const fx = Math.sin(facing)
-    const fz = Math.cos(facing)
+    const fx = -Math.sin(facing)
+    const fz = -Math.cos(facing)
 
     for (const enemy of this._dungeonEnemies) {
       if (!enemy?.group || enemy.isDead)

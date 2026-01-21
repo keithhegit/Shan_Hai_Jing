@@ -73,6 +73,8 @@ export default class Player {
     this._matterGunMuzzle = null
     this._isMatterGunAiming = false
     this._wantsMatterGunEquipped = false
+    this._controlLocked = false
+    this._sprintDisabled = false
 
     this.setupInputListeners()
     emitter.emit('ui:update_stats', { hp: this.hp, maxHp: this.maxHp, stamina: this.stamina })
@@ -114,6 +116,7 @@ export default class Player {
     // 模型始終保持 rotation.y = Math.PI，確保動畫正常播放
     // 整體朝向通過父容器 movement.group 控制
     this.model.rotation.y = Math.PI
+    this.model.scale.setScalar(0.5)
     this.model.updateMatrixWorld()
     this.model.traverse((child) => {
       if (child instanceof THREE.Mesh) {
@@ -382,18 +385,9 @@ export default class Player {
     hold.add(gun)
     hold.rotation.set(0, 0, 0)
 
-    const camera = this.experience.camera?.instance || null
-    if (camera) {
-      hold.position.set(-0.38, 0.26, -0.78)
-      hold.rotation.set(0.1, Math.PI, 0)
-      camera.add(hold)
-    }
-    else {
-      hold.rotation.set(0, Math.PI / 2, 0)
-      hold.position.set(0.03, 0.015, 0.085)
-      const hand = this._findHandBone() || this.model
-      hand.add(hold)
-    }
+    hold.position.set(0.55, 1.05, 0.15)
+    hold.rotation.set(0, Math.PI * 0.5, 0)
+    this.movement.group.add(hold)
 
     const muzzle = new THREE.Object3D()
     if (gunBox) {
@@ -433,7 +427,7 @@ export default class Player {
 
   /**
    * 获取角色位置(脚底点)
-   * @returns {THREE.Vector3}
+   * @returns {THREE.Vector3} 角色脚底位置（世界坐标）
    */
   getPosition() {
     return this.movement.position.clone()
@@ -448,7 +442,7 @@ export default class Player {
 
   /**
    * 获取角色朝向角度
-   * @returns {number}
+   * @returns {number} 朝向角度（弧度）
    */
   getFacingAngle() {
     return this.config.facingAngle
@@ -456,7 +450,7 @@ export default class Player {
 
   /**
    * 获取角色速度
-   * @returns {THREE.Vector3}
+   * @returns {THREE.Vector3} 角色速度（世界坐标）
    */
   getVelocity() {
     return this.movement.worldVelocity.clone()
@@ -464,7 +458,7 @@ export default class Player {
 
   /**
    * 是否正在移动 (基于物理速度)
-   * @returns {boolean}
+   * @returns {boolean} 是否正在移动
    */
   isMoving() {
     const v = this.movement.worldVelocity
@@ -554,7 +548,19 @@ export default class Player {
     const isCombat = this.animation.stateMachine.currentState?.name === AnimationStates.COMBAT && !isBlockingAction
 
     // Resolve Input (Conflict & Normalize)
-    const { resolvedInput, weights } = resolveDirectionInput(this.inputState)
+    const { resolvedInput: rawResolvedInput, weights } = resolveDirectionInput(this.inputState)
+    const resolvedInput = { ...rawResolvedInput }
+    if (this._sprintDisabled)
+      resolvedInput.shift = false
+    if (this._controlLocked) {
+      resolvedInput.forward = false
+      resolvedInput.backward = false
+      resolvedInput.left = false
+      resolvedInput.right = false
+      resolvedInput.shift = false
+      resolvedInput.v = false
+      resolvedInput.space = false
+    }
 
     // 恢复体力
     if (!this.inputState.shift && !this.inputState.space && this.stamina < this.maxStamina) {
@@ -812,6 +818,7 @@ export default class Player {
     this._invulnerableUntil = now + 480
     this.hp = Math.max(0, this.hp - (dmg ?? 1))
     emitter.emit('ui:update_stats', { hp: this.hp })
+    emitter.emit('combat:player_damaged', { amount: dmg ?? 1, hp: this.hp, maxHp: this.maxHp })
 
     if (this.hp <= 0) {
       this.die()
@@ -877,5 +884,20 @@ export default class Player {
       emitter.off('game:respawn', this._onRespawn)
     this._unequipMatterGun()
     this.movement?.group?.removeFromParent?.()
+  }
+
+  setControlLocked(locked) {
+    this._controlLocked = !!locked
+    if (this._controlLocked) {
+      this.movement?.worldVelocity?.set?.(0, this.movement.worldVelocity.y, 0)
+    }
+  }
+
+  setSprintDisabled(disabled) {
+    this._sprintDisabled = !!disabled
+  }
+
+  setSpeedMultiplier(multiplier) {
+    this.movement?.setSpeedMultiplier?.(multiplier)
   }
 }

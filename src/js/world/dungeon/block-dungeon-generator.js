@@ -5,6 +5,72 @@ export default class BlockDungeonGenerator {
     this.chunkManager = chunkManager
   }
 
+  _toWorld(startX, startZ, dir, forward, right) {
+    const perpX = -dir.z
+    const perpZ = dir.x
+    return {
+      x: startX + Math.floor(dir.x * forward + perpX * right),
+      z: startZ + Math.floor(dir.z * forward + perpZ * right),
+    }
+  }
+
+  _clearAirColumn(startX, startZ, floorBlockY, dir, forward, right, radius, height) {
+    const r = Math.max(0, Math.floor(Number(radius) || 0))
+    const h = Math.max(1, Math.floor(Number(height) || 1))
+    for (let df = -r; df <= r; df++) {
+      for (let dr = -r; dr <= r; dr++) {
+        const wpos = this._toWorld(startX, startZ, dir, forward + df, right + dr)
+        for (let dy = 1; dy <= h; dy++) {
+          this.chunkManager.removeBlockWorld(wpos.x, floorBlockY + dy, wpos.z)
+        }
+      }
+    }
+  }
+
+  _getEnemyPool(dungeonType, stage) {
+    const type = String(dungeonType || '').toLowerCase()
+    const s = Math.max(1, Math.min(4, Math.floor(Number(stage) || 1)))
+
+    const tables = {
+      plains: {
+        1: ['tribal'],
+        2: ['orc'],
+        3: ['tribal', 'orc'],
+        4: { boss: 'giant', adds: ['orc'] },
+      },
+      snow: {
+        1: ['yeti'],
+        2: ['yeti'],
+        3: ['yeti2'],
+        4: { boss: 'yeti2', adds: ['yeti2'] },
+      },
+      desert: {
+        1: ['cactoro'],
+        2: ['dino'],
+        3: ['cactoro', 'dino'],
+        4: { boss: 'dino', adds: ['dino'] },
+      },
+      forest: {
+        1: ['frog'],
+        2: ['monkroose'],
+        3: ['ninja', 'monkroose'],
+        4: { boss: 'mushroomking', adds: ['ninja'] },
+      },
+      mine: {
+        1: ['skeleton'],
+        2: ['orc_skull'],
+        3: ['skeleton_armor'],
+        4: { boss: 'skeleton_armor', adds: ['orc_skull'] },
+      },
+    }
+
+    const table = tables[type] || tables.plains
+    const entry = table[s]
+    if (s === 4 && entry && typeof entry === 'object' && !Array.isArray(entry))
+      return entry
+    return { adds: Array.isArray(entry) ? entry : ['skeleton'] }
+  }
+
   generate(originX, originZ, type) {
     const style = this._getStyle(type)
     const dir = this._getDirection(type)
@@ -45,40 +111,133 @@ export default class BlockDungeonGenerator {
       this._buildCorridor(startX, startZ, floorBlockY, dir, corridor, style)
     })
 
-    // Spawn points
-    const spawnX = startX + dir.x * 2
-    const spawnZ = startZ + dir.z * 2
+    for (const corridor of layout.corridors) {
+      const axis = corridor.axis || 'forward'
+      const half = Math.floor((Number(corridor.length) || 0) / 2)
+      const doorRadius = Math.max(2, Math.floor((Number(corridor.width) || 0) / 2) + 1)
+      const doorHeight = 5
 
-    const endRoom = layout.rooms[layout.rooms.length - 1]
-    const exitX = startX + dir.x * (endRoom.l + endRoom.length / 2) + (-dir.z * endRoom.w)
-    const exitZ = startZ + dir.z * (endRoom.l + endRoom.length / 2) + (dir.x * endRoom.w)
-
-    const chestTypes = new Set(['plains', 'snow', 'desert', 'forest'])
-    const perpX = -dir.z
-    const perpZ = dir.x
-    const toWorld = (forward, right) => {
-      return {
-        x: startX + Math.floor(dir.x * forward + perpX * right),
-        z: startZ + Math.floor(dir.z * forward + perpZ * right),
+      if (axis === 'right') {
+        this._clearAirColumn(startX, startZ, floorBlockY, dir, corridor.l, corridor.w - half - 1, doorRadius, doorHeight)
+        this._clearAirColumn(startX, startZ, floorBlockY, dir, corridor.l, corridor.w + half + 1, doorRadius, doorHeight)
+      }
+      else {
+        this._clearAirColumn(startX, startZ, floorBlockY, dir, corridor.l - half - 1, corridor.w, doorRadius, doorHeight)
+        this._clearAirColumn(startX, startZ, floorBlockY, dir, corridor.l + half + 1, corridor.w, doorRadius, doorHeight)
       }
     }
 
-    const startRoom = layout.rooms[0]
-    const mainRoom = layout.rooms.find(r => r.type === 'main') || layout.rooms[1]
-    const startCenter = toWorld(startRoom.l, startRoom.w)
-    const mainCenter = toWorld(mainRoom.l, mainRoom.w)
-    const endCenter = toWorld(endRoom.l, endRoom.w)
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
 
-    if (chestTypes.has(type)) {
-      interactables.push({ x: endCenter.x, y: surfaceY, z: endCenter.z })
+    for (const room of layout.rooms) {
+      const halfL = Math.floor((Number(room.length) || 0) / 2) + 2
+      const halfW = Math.floor((Number(room.width) || 0) / 2) + 2
+      const corners = [
+        this._toWorld(startX, startZ, dir, room.l - halfL, room.w - halfW),
+        this._toWorld(startX, startZ, dir, room.l - halfL, room.w + halfW),
+        this._toWorld(startX, startZ, dir, room.l + halfL, room.w - halfW),
+        this._toWorld(startX, startZ, dir, room.l + halfL, room.w + halfW),
+      ]
+      minX = Math.min(minX, ...corners.map(c => c.x))
+      maxX = Math.max(maxX, ...corners.map(c => c.x))
+      minZ = Math.min(minZ, ...corners.map(c => c.z))
+      maxZ = Math.max(maxZ, ...corners.map(c => c.z))
     }
-    interactables.push({ x: mainCenter.x + perpX * 2, y: surfaceY, z: mainCenter.z + perpZ * 2 })
-    interactables.push({ x: startCenter.x - perpX * 2, y: surfaceY, z: startCenter.z - perpZ * 2 })
+
+    for (const corridor of layout.corridors) {
+      const axis = corridor.axis || 'forward'
+      const halfL = Math.floor((Number(corridor.length) || 0) / 2) + 2
+      const halfW = Math.floor((Number(corridor.width) || 0) / 2) + 2
+      const fMin = axis === 'right' ? (corridor.l - halfW) : (corridor.l - halfL)
+      const fMax = axis === 'right' ? (corridor.l + halfW) : (corridor.l + halfL)
+      const rMin = axis === 'right' ? (corridor.w - halfL) : (corridor.w - halfW)
+      const rMax = axis === 'right' ? (corridor.w + halfL) : (corridor.w + halfW)
+      const corners = [
+        this._toWorld(startX, startZ, dir, fMin, rMin),
+        this._toWorld(startX, startZ, dir, fMin, rMax),
+        this._toWorld(startX, startZ, dir, fMax, rMin),
+        this._toWorld(startX, startZ, dir, fMax, rMax),
+      ]
+      minX = Math.min(minX, ...corners.map(c => c.x))
+      maxX = Math.max(maxX, ...corners.map(c => c.x))
+      minZ = Math.min(minZ, ...corners.map(c => c.z))
+      maxZ = Math.max(maxZ, ...corners.map(c => c.z))
+    }
+
+    if (Number.isFinite(minX) && Number.isFinite(maxX) && Number.isFinite(minZ) && Number.isFinite(maxZ)) {
+      this.chunkManager?.removePlantsInWorldBoxes?.([
+        { minX, maxX, minZ, maxZ, minY: 0, maxY: (this.chunkManager?.chunkHeight ?? 32) - 1 },
+      ])
+    }
+
+    // Spawn points
+    const perpX = -dir.z
+    const perpZ = dir.x
+    const toWorld = (forward, right) => this._toWorld(startX, startZ, dir, forward, right)
+
+    const entranceRoom = layout.rooms.find(r => r.type === 'entrance') || layout.rooms[0]
+    const chestRoom = layout.rooms.find(r => r.type === 'treasure') || null
+    const bossRoom = layout.rooms.find(r => r.type === 'boss') || null
+    const exitRoom = layout.rooms.find(r => r.type === 'exit') || layout.rooms[layout.rooms.length - 1]
+
+    const entranceCenter = toWorld(entranceRoom.l, entranceRoom.w)
+    const exitCenter = toWorld(exitRoom.l, exitRoom.w)
+    const chestCenter = chestRoom ? toWorld(chestRoom.l, chestRoom.w) : null
+    const bossCenter = bossRoom ? toWorld(bossRoom.l, bossRoom.w) : null
+
+    const spawnX = entranceCenter.x
+    const spawnZ = entranceCenter.z
+
+    const exitX = exitCenter.x
+    const exitZ = exitCenter.z
+
+    this.chunkManager?.removePlantsInWorldRadius?.(spawnX, spawnZ, 72)
+
+    this._clearAirColumn(startX, startZ, floorBlockY, dir, entranceRoom.l, entranceRoom.w, 3, 6)
+    this._clearAirColumn(startX, startZ, floorBlockY, dir, exitRoom.l, exitRoom.w, 3, 6)
+    if (chestRoom)
+      this._clearAirColumn(startX, startZ, floorBlockY, dir, chestRoom.l, chestRoom.w, 4, 10)
+
+    const chestPortalIds = new Set(['plains', 'snow', 'desert', 'forest'])
+    if (chestRoom && chestPortalIds.has(type))
+      interactables.push({ x: chestCenter.x, y: surfaceY, z: chestCenter.z })
+
+    if (bossCenter)
+      interactables.push({ x: bossCenter.x + perpX * 2, y: surfaceY, z: bossCenter.z + perpZ * 2 })
+    interactables.push({ x: entranceCenter.x - perpX * 2, y: surfaceY, z: entranceCenter.z - perpZ * 2 })
+
+    if (enemyPositions.length === 0) {
+      const bossRoom2 = layout.rooms.find(r => r.type === 'boss') || null
+      for (const room of layout.rooms) {
+        const roomType = String(room.type || '')
+        const match = roomType.match(/^fight(\d)$/)
+        const stage = match ? Math.max(1, Math.min(4, Number(match[1]) || 1)) : null
+        if (!stage)
+          continue
+        const cx = startX + dir.x * room.l + (-dir.z * room.w)
+        const cz = startZ + dir.z * room.l + (dir.x * room.w)
+        const pool = this._getEnemyPool(type, stage)
+        const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+        enemyPositions.push({ x: cx, y: floorBlockY + 0.5, z: cz, isBoss: false, stage, type: adds[0], hp: 3 + stage, scale: 1 })
+      }
+      if (bossRoom2) {
+        const cx = startX + dir.x * bossRoom2.l + (-dir.z * bossRoom2.w)
+        const cz = startZ + dir.z * bossRoom2.l + (dir.x * bossRoom2.w)
+        const pool = this._getEnemyPool(type, 4)
+        const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+        const bossType = pool?.boss || adds[0] || 'skeleton'
+        enemyPositions.push({ x: cx, y: floorBlockY + 0.5, z: cz, isBoss: true, stage: 4, type: bossType, hp: 14, scale: 1.35 })
+      }
+    }
 
     return {
       surfaceY,
       spawn: { x: spawnX, y: surfaceY + 0.1, z: spawnZ },
       exit: { x: exitX, y: surfaceY, z: exitZ },
+      layout,
       enemies: enemyPositions,
       interactables,
       reward,
@@ -96,10 +255,12 @@ export default class BlockDungeonGenerator {
     // We iterate local grid relative to room center
     const halfL = Math.floor(length / 2)
     const halfW = Math.floor(width / 2)
+    const clearExtra = 12
+    const clearHeight = Math.max(height, 0) + clearExtra
 
     for (let dl = -halfL; dl <= halfL; dl++) {
       for (let dw = -halfW; dw <= halfW; dw++) {
-        for (let h = -1; h <= height; h++) {
+        for (let h = -1; h <= clearHeight; h++) {
           const perpX = -dir.z
           const perpZ = dir.x
 
@@ -114,7 +275,10 @@ export default class BlockDungeonGenerator {
 
           const isWall = (dl === -halfL || dl === halfL || dw === -halfW || dw === halfW)
 
-          if (h === 0) {
+          if (h > height) {
+            blockId = blocks.empty.id
+          }
+          else if (h === 0) {
             blockId = style.floor
           }
           else if (h === -1) {
@@ -145,32 +309,57 @@ export default class BlockDungeonGenerator {
 
     let reward = null
 
-    // Add enemies and loot in center
-    if (room.type === 'main' && dungeonType !== 'mine') {
+    // Add enemies and loot in fight rooms
+    const roomType = String(room.type || '')
+    const match = roomType.match(/^fight(\d)$/)
+    const stage = match ? Math.max(1, Math.min(4, Number(match[1]) || 1)) : null
+    if (roomType === 'boss') {
       const cx = startX + dir.x * l + (-dir.z * w)
       const cz = startZ + dir.z * l + (dir.x * w)
-      enemies.push({ x: cx + 2, y: floorBlockY + 0.5, z: cz + 2, isBoss: true })
+      const pool = this._getEnemyPool(dungeonType, 4)
+      const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+      const bossType = pool?.boss || adds[0] || 'skeleton'
+      enemies.push({ x: cx, y: floorBlockY + 0.5, z: cz, isBoss: true, stage: 4, type: bossType, hp: 14, scale: 1.35 })
       reward = { x: cx, y: floorBlockY + 0.5, z: cz }
+    }
+    else if (stage) {
+      const cx = startX + dir.x * l + (-dir.z * w)
+      const cz = startZ + dir.z * l + (dir.x * w)
+      const count = 1
+      const pool = this._getEnemyPool(dungeonType, stage)
+      const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+      for (let i = 0; i < count; i++) {
+        const dx = i === 0 ? 0 : (i % 2 === 0 ? 1 : -1) * (1 + Math.floor(i / 2))
+        const dz = i === 0 ? 0 : ((i % 3) - 1)
+        const spawnType = adds[i % adds.length]
+        const hp = 3 + stage
+        const scale = 1
+        enemies.push({ x: cx + dx, y: floorBlockY + 0.5, z: cz + dz, isBoss: false, stage, type: spawnType, hp, scale })
+      }
     }
 
     return { reward }
   }
 
   _buildCorridor(startX, startZ, floorBlockY, dir, corridor, style) {
-    const { l, w, width, length, height } = corridor
+    const { l, w, width, length, height, axis = 'forward' } = corridor
 
     // Corridors are aligned with direction
     const halfL = Math.floor(length / 2)
     const halfW = Math.floor(width / 2)
+    const clearExtra = 12
+    const clearHeight = Math.max(height, 0) + clearExtra
 
     for (let dl = -halfL; dl <= halfL; dl++) {
       for (let dw = -halfW; dw <= halfW; dw++) {
-        for (let h = 0; h <= height; h++) {
+        for (let h = 0; h <= clearHeight; h++) {
           const perpX = -dir.z
           const perpZ = dir.x
 
-          const forward = l + dl
-          const right = w + dw
+          const u = dl
+          const v = dw
+          const forward = axis === 'right' ? (l + v) : (l + u)
+          const right = axis === 'right' ? (w + u) : (w + v)
 
           const x = startX + Math.floor(dir.x * forward + perpX * right)
           const z = startZ + Math.floor(dir.z * forward + perpZ * right)
@@ -178,9 +367,13 @@ export default class BlockDungeonGenerator {
 
           let blockId = blocks.empty.id
 
-          const isWall = (dw === -halfW || dw === halfW)
+          const isEndpoint = Math.abs(dl) >= Math.max(0, halfL - 1)
+          const isWall = !isEndpoint && (dw === -halfW || dw === halfW)
 
-          if (h === 0) {
+          if (h > height) {
+            blockId = blocks.empty.id
+          }
+          else if (h === 0) {
             blockId = style.floor
           }
           else {
@@ -205,18 +398,36 @@ export default class BlockDungeonGenerator {
   }
 
   _createLayout(_type) {
-    // Simple 3-room layout
-    // Room 1 (Start) -> Corridor -> Room 2 (Main) -> Corridor -> Room 3 (End)
+    const entrance = { l: 5, w: 0, width: 19, length: 19, height: 7, type: 'entrance' }
 
-    const r1 = { l: 5, w: 0, width: 9, length: 9, height: 6, type: 'start' }
-    const c1 = { l: 14, w: 0, width: 3, length: 10, height: 5 }
-    const r2 = { l: 24, w: 0, width: 15, length: 15, height: 8, type: 'main' } // Big room
-    const c2 = { l: 36, w: 0, width: 3, length: 10, height: 5 }
-    const r3 = { l: 45, w: 0, width: 9, length: 9, height: 6, type: 'end' }
+    const r1 = { l: 22, w: 0, width: 13, length: 13, height: 7, type: 'fight1' }
+    const r2 = { l: 38, w: -10, width: 15, length: 15, height: 8, type: 'fight2' }
+    const r3 = { l: 38, w: 10, width: 13, length: 13, height: 8, type: 'fight3' }
+    const r4 = { l: 54, w: 10, width: 13, length: 13, height: 8, type: 'fight4' }
+    const boss = { l: 30, w: 22, width: 15, length: 15, height: 9, type: 'boss' }
+    const treasure = { l: 30, w: 36, width: 13, length: 13, height: 8, type: 'treasure' }
+    const exit = { l: 14, w: 36, width: 13, length: 13, height: 8, type: 'exit' }
+
+    const corridors = [
+      { l: 14, w: 0, width: 7, length: 18, height: 6, axis: 'forward' },
+      { l: 30, w: 0, width: 7, length: 18, height: 6, axis: 'forward' },
+
+      { l: 38, w: -5, width: 7, length: 17, height: 6, axis: 'right' },
+      { l: 38, w: 5, width: 7, length: 17, height: 6, axis: 'right' },
+      { l: 38, w: 0, width: 7, length: 33, height: 6, axis: 'right' },
+
+      { l: 46, w: 10, width: 7, length: 18, height: 6, axis: 'forward' },
+
+      { l: 34, w: 10, width: 7, length: 18, height: 6, axis: 'forward' },
+      { l: 30, w: 16, width: 7, length: 24, height: 6, axis: 'right' },
+
+      { l: 30, w: 29, width: 7, length: 28, height: 6, axis: 'right' },
+      { l: 22, w: 36, width: 7, length: 34, height: 6, axis: 'forward' },
+    ]
 
     return {
-      rooms: [r1, r2, r3],
-      corridors: [c1, c2],
+      rooms: [entrance, r1, r2, r3, r4, boss, treasure, exit],
+      corridors,
     }
   }
 
