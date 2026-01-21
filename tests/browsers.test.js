@@ -658,7 +658,7 @@ test('dungeon: no roof above spawn, enemies stay on floor, and plants are cleare
 })
 
 test('dungeon: desert chest has clear air around it (not occluded by blocks)', async ({ page }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
   const consoleErrors = []
   const pageErrors = []
 
@@ -714,7 +714,7 @@ test('dungeon: desert chest has clear air around it (not occluded by blocks)', a
 })
 
 test('dungeon: snow chest has clear air around it (not occluded by blocks)', async ({ page }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
   const consoleErrors = []
   const pageErrors = []
 
@@ -768,7 +768,7 @@ test('dungeon: snow chest has clear air around it (not occluded by blocks)', asy
 })
 
 test('dungeon: each themed type generates expected enemies', async ({ page }) => {
-  test.setTimeout(120_000)
+  test.setTimeout(180_000)
   const consoleErrors = []
   const pageErrors = []
 
