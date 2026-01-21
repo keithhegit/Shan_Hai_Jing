@@ -105,6 +105,7 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     const dz = item.z - z
     const facing = world._getFacingTo ? world._getFacingTo(dx, dz) : Math.atan2(dx, dz)
     world.player.setFacing(facing)
+    world._updateInteractables?.()
   })
 
   await page.keyboard.press('e')
@@ -573,6 +574,141 @@ test('dungeon: coin pickup is single-use and lock-on still works', async ({ page
   const after2 = await page.evaluate(() => Number(window.Experience.world._inventory?.backpack?.items?.coin || 0))
   expect(after2).toBe(after1)
 
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: no roof above spawn, enemies stay on floor, and plants are cleared in rooms', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'forest') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonEnemies?.length), { timeout: 20_000 })
+
+  await page.waitForTimeout(1200)
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const spawn = world.player?.getPosition?.()
+    const dungeonY = Number(world._dungeonSurfaceY)
+
+    let maxEnemyY = -Infinity
+    for (const e of (world._dungeonEnemies || [])) {
+      if (!e?.group)
+        continue
+      maxEnemyY = Math.max(maxEnemyY, e.group.position.y)
+    }
+
+    const radius = 18
+    let plantsNearSpawn = 0
+    for (const chunk of (cm?.chunks?.values?.() || [])) {
+      const plantData = chunk?.generator?.plantData
+      if (!Array.isArray(plantData) || plantData.length === 0)
+        continue
+      const ox = chunk.originX || 0
+      const oz = chunk.originZ || 0
+      for (const p of plantData) {
+        const wx = ox + (p?.x ?? 0)
+        const wz = oz + (p?.z ?? 0)
+        const dx = wx - spawn.x
+        const dz = wz - spawn.z
+        if (dx * dx + dz * dz <= radius * radius) {
+          plantsNearSpawn++
+          break
+        }
+      }
+    }
+
+    return {
+      maxEnemyY,
+      dungeonY,
+      plantsNearSpawn,
+    }
+  })
+
+  expect(result.maxEnemyY).toBeLessThanOrEqual(result.dungeonY + 1.6)
+  expect(result.plantsNearSpawn).toBe(0)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: desert chest has clear air around it (not occluded by blocks)', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'desert') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonInteractables?.length), { timeout: 20_000 })
+
+  const ok = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const chest = (world._dungeonInteractables || []).find(i => i && i.lockedChestId) || null
+    if (!chest)
+      return { ok: false, reason: 'no chest' }
+    if (!chest.mesh)
+      return { ok: false, reason: 'no mesh' }
+    const floorBlockY = Math.floor(Number(chest.y) || 0)
+    const x = Math.floor(chest.x)
+    const z = Math.floor(chest.z)
+    const ids = []
+    for (let dy = 1; dy <= 6; dy++) {
+      const b = cm.getBlockWorld(x, floorBlockY + dy, z)
+      ids.push(b?.id ?? null)
+    }
+    const clear = ids.every(id => id === 0)
+    return { ok: clear, ids }
+  })
+
+  expect(ok.ok).toBe(true)
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })

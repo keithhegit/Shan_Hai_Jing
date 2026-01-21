@@ -32,6 +32,7 @@ export default class World {
     this._dungeonState = null
     this._dungeonCompleted = false
     this._activeDungeonPortalId = null
+    this._dungeonSurfaceY = null
     this._portalDungeonProgress = this._loadPortalDungeonProgress()
     this._activeDungeonExit = null
     this._activeDungeonExitPrompt = null
@@ -2119,6 +2120,8 @@ export default class World {
   }
 
   _getSurfaceY(worldX, worldZ) {
+    if (this.currentWorld === 'dungeon' && Number.isFinite(Number(this._dungeonSurfaceY)))
+      return Number(this._dungeonSurfaceY)
     const topY = this.chunkManager?.getTopSolidYWorld?.(worldX, worldZ)
     if (typeof topY !== 'number' || Number.isNaN(topY))
       return 10
@@ -2719,7 +2722,7 @@ export default class World {
     // 不再需要 BoxGeometry 的墙壁，因为已经生成了方块
     // 只需要生成 Exit 标记和 Enemy/Interactables
 
-    const { spawn, exit, enemies, interactables, reward } = dungeonInfo
+    const { surfaceY, spawn, exit, enemies, interactables, reward } = dungeonInfo
 
     // Exit Mesh (保持视觉标记)
     const exitGeometry = new THREE.TorusGeometry(1.55, 0.22, 16, 48)
@@ -2774,6 +2777,7 @@ export default class World {
     this._activeDungeonPortalId = portal.id
     this._dungeonRewardPending = reward || null
     this._dungeonRewardSpawned = false
+    this._dungeonSurfaceY = Number.isFinite(Number(surfaceY)) ? (Number(surfaceY) + 0.05) : null
 
     // 初始化交互物 (使用 generator 返回的位置)
     this._initDungeonInteractablesV2(interactables, portal.id)
@@ -2901,6 +2905,7 @@ export default class World {
       this._dungeonProgress = null
       this._dungeonCompleted = false
       this._activeDungeonPortalId = null
+      this._dungeonSurfaceY = null
       this._activeDungeonExitPrompt = null
       this._lockedEnemy = null
       this._dungeonRewardPending = null
@@ -3112,6 +3117,19 @@ export default class World {
     }
 
     this._dungeonInteractables = list.map((item) => {
+      if (item.lockedChestId) {
+        const baseY = Math.floor(Number(item.y) || 0)
+        const cx = Math.floor(Number(item.x) || 0)
+        const cz = Math.floor(Number(item.z) || 0)
+        for (let dy = 1; dy <= 7; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            for (let dz = -1; dz <= 1; dz++) {
+              this.chunkManager?.removeBlockWorld?.(cx + dx, baseY + dy, cz + dz)
+            }
+          }
+        }
+      }
+
       let mesh
       const resource = item.lockedChestId && item.looted
         ? (this.resources.items.chest_open || this.resources.items.chest_closed)
@@ -3127,6 +3145,8 @@ export default class World {
       }
 
       mesh.position.set(item.x, (item.y ?? 0) + 0.5, item.z)
+      if (item.lockedChestId)
+        mesh.renderOrder = 4
       this._dungeonInteractablesGroup.add(mesh)
 
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
@@ -3985,6 +4005,8 @@ export default class World {
           const pos = enemy.group.position
           const groundY = this._getSurfaceY(pos.x, pos.z)
           enemy.group.position.y += (groundY - enemy.group.position.y) * 0.18
+          if (this.currentWorld === 'dungeon' && Number.isFinite(Number(this._dungeonSurfaceY)))
+            enemy.group.position.y = Number(this._dungeonSurfaceY)
           continue
         }
       }
@@ -4023,6 +4045,8 @@ export default class World {
 
         const groundY = this._getSurfaceY(pos.x, pos.z)
         enemy.group.position.y += (groundY - enemy.group.position.y) * 0.15
+        if (this.currentWorld === 'dungeon' && Number.isFinite(Number(this._dungeonSurfaceY)))
+          enemy.group.position.y = Number(this._dungeonSurfaceY)
       }
     }
   }

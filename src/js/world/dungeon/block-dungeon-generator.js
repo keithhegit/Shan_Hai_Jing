@@ -127,6 +127,52 @@ export default class BlockDungeonGenerator {
       }
     }
 
+    let minX = Infinity
+    let maxX = -Infinity
+    let minZ = Infinity
+    let maxZ = -Infinity
+
+    for (const room of layout.rooms) {
+      const halfL = Math.floor((Number(room.length) || 0) / 2) + 2
+      const halfW = Math.floor((Number(room.width) || 0) / 2) + 2
+      const corners = [
+        this._toWorld(startX, startZ, dir, room.l - halfL, room.w - halfW),
+        this._toWorld(startX, startZ, dir, room.l - halfL, room.w + halfW),
+        this._toWorld(startX, startZ, dir, room.l + halfL, room.w - halfW),
+        this._toWorld(startX, startZ, dir, room.l + halfL, room.w + halfW),
+      ]
+      minX = Math.min(minX, ...corners.map(c => c.x))
+      maxX = Math.max(maxX, ...corners.map(c => c.x))
+      minZ = Math.min(minZ, ...corners.map(c => c.z))
+      maxZ = Math.max(maxZ, ...corners.map(c => c.z))
+    }
+
+    for (const corridor of layout.corridors) {
+      const axis = corridor.axis || 'forward'
+      const halfL = Math.floor((Number(corridor.length) || 0) / 2) + 2
+      const halfW = Math.floor((Number(corridor.width) || 0) / 2) + 2
+      const fMin = axis === 'right' ? (corridor.l - halfW) : (corridor.l - halfL)
+      const fMax = axis === 'right' ? (corridor.l + halfW) : (corridor.l + halfL)
+      const rMin = axis === 'right' ? (corridor.w - halfL) : (corridor.w - halfW)
+      const rMax = axis === 'right' ? (corridor.w + halfL) : (corridor.w + halfW)
+      const corners = [
+        this._toWorld(startX, startZ, dir, fMin, rMin),
+        this._toWorld(startX, startZ, dir, fMin, rMax),
+        this._toWorld(startX, startZ, dir, fMax, rMin),
+        this._toWorld(startX, startZ, dir, fMax, rMax),
+      ]
+      minX = Math.min(minX, ...corners.map(c => c.x))
+      maxX = Math.max(maxX, ...corners.map(c => c.x))
+      minZ = Math.min(minZ, ...corners.map(c => c.z))
+      maxZ = Math.max(maxZ, ...corners.map(c => c.z))
+    }
+
+    if (Number.isFinite(minX) && Number.isFinite(maxX) && Number.isFinite(minZ) && Number.isFinite(maxZ)) {
+      this.chunkManager?.removePlantsInWorldBoxes?.([
+        { minX, maxX, minZ, maxZ, minY: 0, maxY: (this.chunkManager?.chunkHeight ?? 32) - 1 },
+      ])
+    }
+
     // Spawn points
     const perpX = -dir.z
     const perpZ = dir.x
@@ -148,10 +194,12 @@ export default class BlockDungeonGenerator {
     const exitX = exitCenter.x
     const exitZ = exitCenter.z
 
+    this.chunkManager?.removePlantsInWorldRadius?.(spawnX, spawnZ, 72)
+
     this._clearAirColumn(startX, startZ, floorBlockY, dir, entranceRoom.l, entranceRoom.w, 3, 6)
     this._clearAirColumn(startX, startZ, floorBlockY, dir, exitRoom.l, exitRoom.w, 3, 6)
     if (chestRoom)
-      this._clearAirColumn(startX, startZ, floorBlockY, dir, chestRoom.l, chestRoom.w, 3, 6)
+      this._clearAirColumn(startX, startZ, floorBlockY, dir, chestRoom.l, chestRoom.w, 4, 10)
 
     const chestPortalIds = new Set(['plains', 'snow', 'desert', 'forest'])
     if (chestRoom && chestPortalIds.has(type))
