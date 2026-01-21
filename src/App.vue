@@ -304,12 +304,24 @@ function gridCanFit(uid, x, y, w, h) {
     return false
   for (let yy = y; yy < y + h; yy++) {
     for (let xx = x; xx < x + w; xx++) {
+      if (grid.mask?.[yy]?.[xx] === 0)
+        return false
       const v = grid.cells?.[yy]?.[xx] ?? null
       if (v && v !== uid)
         return false
     }
   }
   return true
+}
+
+function gridCellActive(index) {
+  const grid = gridState.value
+  if (!grid)
+    return false
+  const i = Number(index)
+  const x = (i - 1) % grid.cols
+  const y = Math.floor((i - 1) / grid.cols)
+  return grid.mask?.[y]?.[x] !== 0
 }
 
 function gridPointerToCell(event) {
@@ -368,6 +380,7 @@ function onGridPointerUp(event) {
       item.h = drag.h
       item.rotated = drag.rotated
       gridRecomputeCells(grid)
+      emitter.emit('inventory:grid_place', { uid: item.uid, x: item.x, y: item.y, rotated: !!item.rotated })
     }
   }
   gridDrag.value = null
@@ -383,6 +396,19 @@ function rotateDraggedGridItem() {
   drag.w = nextW
   drag.h = nextH
   drag.rotated = !drag.rotated
+}
+
+function gridIconKind(id) {
+  const key = String(id || '')
+  if (key === 'coin')
+    return 'coin'
+  if (key === 'material_gun')
+    return 'gun'
+  if (key.startsWith('key_'))
+    return 'key'
+  if (key.startsWith('canister_'))
+    return 'canister'
+  return null
 }
 
 onMounted(() => {
@@ -751,7 +777,8 @@ onBeforeUnmount(() => {
                     <div
                       v-for="i in (gridState.cols * gridState.rows)"
                       :key="`cell:${i}`"
-                      class="rounded-md border border-white/5 bg-white/5"
+                      class="rounded-md border"
+                      :class="gridCellActive(i) ? 'border-white/5 bg-white/5' : 'border-transparent bg-transparent'"
                     />
                   </div>
 
@@ -780,9 +807,45 @@ onBeforeUnmount(() => {
                     }"
                     @pointerdown="(e) => onGridItemPointerDown(e, it.uid)"
                   >
-                    <span class="truncate">
-                      {{ it.itemId }}
-                    </span>
+                    <div class="flex w-full items-center gap-2 overflow-hidden">
+                      <svg
+                        v-if="gridIconKind(it.itemId) === 'coin'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
+                        <path d="M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'key'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M10 14a4 4 0 1 1 1.17-2.83L20 11v3h-2v2h-2v2h-3v-2.2l-1.83-.12A4 4 0 0 1 10 14Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'canister'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                        <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'gun'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M4 14h10l2-4h4v4h-2v2h-6v-2H4v-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <span class="min-w-0 truncate">
+                        {{ itemLabel(it.itemId) }}
+                      </span>
+                    </div>
                   </button>
                 </div>
               </div>

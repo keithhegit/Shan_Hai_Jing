@@ -137,7 +137,6 @@ export default class ChunkManager {
     const r = Math.max(0, Number(radius) || 0)
     if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(r > 0))
       return 0
-    const r2 = r * r
     return this.removePlantsInWorldBoxes([{
       minX: cx - r,
       maxX: cx + r,

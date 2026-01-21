@@ -63,6 +63,14 @@ export default class World {
     this._inventoryConfig = {
       backpack: { slots: 24, maxWeight: 60 },
       grid: { cols: 8, rows: 6 },
+      gridMask: [
+        [0, 1, 1, 1, 1, 1, 1, 0],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [1, 1, 1, 1, 1, 1, 1, 1],
+        [0, 1, 1, 1, 1, 1, 1, 0],
+      ],
       itemSizes: {
         canister_small: { w: 1, h: 1 },
         canister_medium: { w: 1, h: 2 },
@@ -479,6 +487,9 @@ export default class World {
       this._onInventoryEquip = (payload) => {
         this._equipInventoryItem(payload)
       }
+      this._onInventoryGridPlace = (payload) => {
+        this._placeBackpackGridItem(payload)
+      }
       this._onGrabPet = () => {
         this._toggleCarryAnimal()
       }
@@ -488,6 +499,7 @@ export default class World {
       emitter.on('inventory:close', this._onInventoryClose)
       emitter.on('inventory:transfer', this._onInventoryTransfer)
       emitter.on('inventory:equip', this._onInventoryEquip)
+      emitter.on('inventory:grid_place', this._onInventoryGridPlace)
       emitter.on('input:grab_pet', this._onGrabPet)
 
       this._onChestClose = (payload) => {
@@ -1310,10 +1322,10 @@ export default class World {
   _loadInventory() {
     try {
       if (typeof window === 'undefined')
-        return { backpack: { items: {} }, warehouse: { items: {} } }
+        return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
       const raw = window.localStorage?.getItem?.('mmmc:inventory_v1')
       if (!raw)
-        return { backpack: { items: {} }, warehouse: { items: {} } }
+        return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
       const parsed = JSON.parse(raw)
       const backpack = parsed?.backpack?.items && typeof parsed.backpack.items === 'object'
         ? parsed.backpack.items
@@ -1321,14 +1333,38 @@ export default class World {
       const warehouse = parsed?.warehouse?.items && typeof parsed.warehouse.items === 'object'
         ? parsed.warehouse.items
         : {}
+      const gridLayoutsRaw = parsed?.gridLayouts && typeof parsed.gridLayouts === 'object'
+        ? parsed.gridLayouts
+        : {}
       return {
         backpack: { items: this._sanitizeItemMap(backpack) },
         warehouse: { items: this._sanitizeItemMap(warehouse) },
+        gridLayouts: this._sanitizeGridLayouts(gridLayoutsRaw),
       }
     }
     catch {
-      return { backpack: { items: {} }, warehouse: { items: {} } }
+      return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
     }
+  }
+
+  _sanitizeGridLayouts(raw) {
+    const src = raw && typeof raw === 'object' ? raw : {}
+    const backpack = src?.backpack && typeof src.backpack === 'object' ? src.backpack : {}
+    const next = { backpack: {} }
+    for (const [uid, entry] of Object.entries(backpack)) {
+      if (typeof uid !== 'string' || !entry || typeof entry !== 'object')
+        continue
+      const x = Math.floor(Number(entry.x))
+      const y = Math.floor(Number(entry.y))
+      if (!Number.isFinite(x) || !Number.isFinite(y))
+        continue
+      next.backpack[uid] = {
+        x,
+        y,
+        rotated: !!entry.rotated,
+      }
+    }
+    return next
   }
 
   _sanitizeItemMap(map) {
@@ -1368,7 +1404,11 @@ export default class World {
 
   _getBagItems(bagName) {
     if (!this._inventory)
-      this._inventory = { backpack: { items: {} }, warehouse: { items: {} } }
+      this._inventory = { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
+    if (!this._inventory.gridLayouts)
+      this._inventory.gridLayouts = { backpack: {} }
+    if (!this._inventory.gridLayouts.backpack)
+      this._inventory.gridLayouts.backpack = {}
     if (bagName === 'warehouse') {
       if (!this._inventory.warehouse)
         this._inventory.warehouse = { items: {} }
@@ -1931,15 +1971,20 @@ export default class World {
       },
       grid: { ...(this._inventoryConfig?.grid || { cols: 8, rows: 6 }) },
       itemSizes: { ...(this._inventoryConfig?.itemSizes || {}) },
-      backpackGrid: this._buildBackpackGridSnapshot(backpackItems),
+      backpackGrid: this._buildBackpackGridSnapshot(backpackItems, this._inventory?.gridLayouts?.backpack || {}),
     })
   }
 
-  _buildBackpackGridSnapshot(items) {
+  _buildBackpackGridSnapshot(items, layout) {
     const cfg = this._inventoryConfig?.grid || { cols: 8, rows: 6 }
     const cols = Math.max(1, Math.floor(Number(cfg.cols) || 8))
     const rows = Math.max(1, Math.floor(Number(cfg.rows) || 6))
     const sizes = this._inventoryConfig?.itemSizes || {}
+    const rawMask = Array.isArray(this._inventoryConfig?.gridMask) ? this._inventoryConfig.gridMask : null
+    const mask = Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => {
+      const v = rawMask?.[y]?.[x]
+      return v === 0 ? 0 : 1
+    }))
 
     const cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => null))
     const placed = []
@@ -1969,6 +2014,8 @@ export default class World {
         return false
       for (let yy = y; yy < y + h; yy++) {
         for (let xx = x; xx < x + w; xx++) {
+          if (mask[yy][xx] === 0)
+            return false
           const v = cells[yy][xx]
           if (v && v !== uid)
             return false
@@ -1985,7 +2032,35 @@ export default class World {
       }
     }
 
+    const preferred = []
+    const remaining = []
+    const layoutMap = layout && typeof layout === 'object' ? layout : {}
     for (const item of expanded) {
+      const pref = layoutMap?.[item.uid]
+      if (pref && typeof pref === 'object') {
+        const baseW = item.w
+        const baseH = item.h
+        const rotated = !!pref.rotated
+        const w = rotated ? baseH : baseW
+        const h = rotated ? baseW : baseH
+        preferred.push({ ...item, x: Math.floor(Number(pref.x)), y: Math.floor(Number(pref.y)), w, h, rotated })
+      }
+      else {
+        remaining.push(item)
+      }
+    }
+
+    for (const item of preferred) {
+      if (Number.isFinite(item.x) && Number.isFinite(item.y) && canFitAt(item.uid, item.x, item.y, item.w, item.h)) {
+        fill(item.uid, item.x, item.y, item.w, item.h, item.uid)
+        placed.push({ uid: item.uid, itemId: item.itemId, w: item.w, h: item.h, x: item.x, y: item.y, rotated: item.rotated })
+      }
+      else {
+        remaining.push({ uid: item.uid, itemId: item.itemId, w: item.rotated ? item.h : item.w, h: item.rotated ? item.w : item.h })
+      }
+    }
+
+    for (const item of remaining) {
       let found = null
       for (let y = 0; y < rows && !found; y++) {
         for (let x = 0; x < cols; x++) {
@@ -2006,6 +2081,7 @@ export default class World {
     return {
       cols,
       rows,
+      mask,
       cells,
       items: placed,
       overflow,
@@ -2117,6 +2193,31 @@ export default class World {
     if (!ok)
       return
     this._addInventoryItem(to, itemId, amount)
+  }
+
+  _placeBackpackGridItem(payload) {
+    const uid = payload?.uid
+    const x = Math.floor(Number(payload?.x))
+    const y = Math.floor(Number(payload?.y))
+    const rotated = !!payload?.rotated
+    if (!uid || !Number.isFinite(x) || !Number.isFinite(y))
+      return
+
+    const items = this._getBagItems('backpack')
+    const base = this._inventory?.gridLayouts?.backpack || {}
+    const next = { ...base, [uid]: { x, y, rotated } }
+    const snapshot = this._buildBackpackGridSnapshot(items, next)
+    const placed = (snapshot?.items || []).find(i => i.uid === uid) || null
+    if (!placed || placed.x !== x || placed.y !== y || !!placed.rotated !== rotated) {
+      emitter.emit('dungeon:toast', { text: '无法放置到该位置' })
+      return
+    }
+
+    if (!this._inventory.gridLayouts)
+      this._inventory.gridLayouts = { backpack: {} }
+    this._inventory.gridLayouts.backpack = next
+    this._emitInventoryState()
+    this._scheduleInventorySave()
   }
 
   _getSurfaceY(worldX, worldZ) {

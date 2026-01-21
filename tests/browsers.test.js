@@ -264,12 +264,9 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
   await expect(closeButton).toBeVisible({ timeout: 10_000 })
 
   const inventoryModal = closeButton.locator('..').locator('..')
-  await expect(inventoryModal.getByText('物质枪', { exact: true })).toBeVisible({ timeout: 10_000 })
-
-  const gunRow = inventoryModal
-    .getByText('物质枪', { exact: true })
-    .locator('xpath=ancestor::*[contains(@class,"flex")][1]')
-  await gunRow.getByRole('button', { name: '装备/收起' }).click()
+  const equipButton = inventoryModal.getByRole('button', { name: '装备/收起' })
+  await expect(equipButton).toBeVisible({ timeout: 10_000 })
+  await equipButton.click()
   await page.waitForFunction(() => Boolean(window.Experience?.world?._isMaterialGunEquipped), { timeout: 10_000 })
 
   const equipped = await page.evaluate(() => {
