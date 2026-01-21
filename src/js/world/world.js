@@ -281,6 +281,13 @@ export default class World {
           return
         if (this._activeInteractable) {
           if (this._activeInteractable.pickupItemId) {
+            if (this._activeInteractable.read) {
+              this._activeInteractableId = null
+              this._activeInteractable = null
+              emitter.emit('interactable:prompt_clear')
+              emitter.emit('portal:prompt_clear')
+              return
+            }
             const itemId = this._activeInteractable.pickupItemId
             const count = Math.max(1, Math.floor(Number(this._activeInteractable.pickupAmount) || 1))
             if (this._canAddToBackpack(itemId, count)) {
@@ -310,6 +317,9 @@ export default class World {
             this._scheduleInventorySave()
             this._emitInventorySummary()
             this._emitInventoryState()
+            this._activeInteractable.range = 0
+            this._activeInteractableId = null
+            this._activeInteractable = null
             emitter.emit('interactable:prompt_clear')
             emitter.emit('portal:prompt_clear')
             return
@@ -1126,7 +1136,7 @@ export default class World {
     let bestD2 = Infinity
     const maxD2 = maxDistance * maxDistance
     for (const enemy of this._dungeonEnemies) {
-      if (!enemy?.group)
+      if (!enemy?.group || enemy.isDead)
         continue
       const epos = new THREE.Vector3()
       enemy.group.getWorldPosition(epos)
@@ -1149,8 +1159,6 @@ export default class World {
     if (this.currentWorld !== 'dungeon' && this.currentWorld !== 'hub')
       return
     if (!this.player)
-      return
-    if (this._activeInteractableId !== null)
       return
 
     if (this._lockedEnemy) {
@@ -1429,12 +1437,25 @@ export default class World {
     return String(name).replace(/\.(?:gltf|glb)$/i, '')
   }
 
-  _getRequiredKeyForPortalChest(portalId) {
+  _getPortalChestType(portalId) {
     if (!portalId)
       return null
-    if (portalId !== 'plains' && portalId !== 'snow' && portalId !== 'desert' && portalId !== 'forest')
+    if (portalId === 'plains')
+      return 'snow'
+    if (portalId === 'snow')
+      return 'desert'
+    if (portalId === 'desert')
+      return 'forest'
+    if (portalId === 'forest')
+      return 'plains'
+    return null
+  }
+
+  _getRequiredKeyForPortalChest(portalId) {
+    const chestType = this._getPortalChestType(portalId)
+    if (!chestType)
       return null
-    return `key_${portalId}`
+    return `key_${chestType}`
   }
 
   _getLockedChestPool() {
@@ -3056,13 +3077,14 @@ export default class World {
     if (chestPortalIds.has(portalId)) {
       const pos = dungeonPositions[0] || { x: 0, y: 0, z: 0 }
       const chestId = `portal-chest-${portalId}`
+      const chestType = this._getPortalChestType(portalId) || portalId
       const requiredKeyId = this._getRequiredKeyForPortalChest(portalId)
       const state = this._lockedChests?.[chestId] || {}
       const unlocked = !!state.unlocked
       const looted = !!state.looted
       list.push({
         id: chestId,
-        title: chestTitles?.[portalId] || '宝箱',
+        title: chestTitles?.[chestType] || '宝箱',
         description: requiredKeyId ? `需要${this._getModelFilenameByResourceKey(requiredKeyId)}解锁` : '需要钥匙解锁',
         hint: looted ? '已开启' : (unlocked ? '按 E 打开宝箱' : '按 E 解锁宝箱'),
         lockedChestId: chestId,
@@ -3090,21 +3112,10 @@ export default class World {
     }
 
     this._dungeonInteractables = list.map((item) => {
-      if (item.lockedChestId && item.looted) {
-        return {
-          ...item,
-          mesh: null,
-          outline: null,
-          hitRadius: 0,
-          range: 0,
-          read: true,
-          spinSpeed: 0,
-          parentGroup: this._dungeonInteractablesGroup,
-        }
-      }
-
       let mesh
-      const resource = this.resources.items.chest_closed
+      const resource = item.lockedChestId && item.looted
+        ? (this.resources.items.chest_open || this.resources.items.chest_closed)
+        : this.resources.items.chest_closed
       if (resource?.scene) {
         mesh = resource.scene.clone()
         mesh.scale.set(0.5, 0.5, 0.5)
@@ -3165,6 +3176,8 @@ export default class World {
     let best = null
     let bestD2 = Infinity
     for (const item of this._dungeonInteractables) {
+      if (!(Number(item?.range) > 0))
+        continue
       const dx = pos.x - item.x
       const dz = pos.z - item.z
       const d2 = dx * dx + dz * dz
@@ -3184,7 +3197,7 @@ export default class World {
         emitter.emit('interactable:prompt', { title: best.title, hint })
       }
     }
-    else if (this._activeInteractableId !== null && this._activeInteractable && this._activeInteractableId.startsWith('dungeon-')) {
+    else if (this._activeInteractableId !== null && this._activeInteractable) {
       this._activeInteractableId = null
       this._activeInteractable = null
       emitter.emit('interactable:prompt_clear')

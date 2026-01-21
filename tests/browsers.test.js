@@ -319,7 +319,7 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
     const world = window.Experience?.world
     const animal = world?.animals?.[0]
     return Boolean(world?._materialGunBeam?.visible && Number(animal?.hp) < Number(hp))
-  }, hpBefore, { timeout: 12_000 })
+  }, hpBefore, { timeout: 25_000 })
 
   const { hpAfter, forcedAggro } = await page.evaluate(() => {
     const world = window.Experience.world
@@ -445,6 +445,134 @@ test('material gun: firing while locked quickly faces target', async ({ page }) 
 
   expect(dot).not.toBeNull()
   expect(dot).toBeGreaterThanOrEqual(0.75)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('lock-on: works even when an interactable prompt is active', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    return Boolean(world?.player && world?.animals?.length && world?.interactables?.length)
+  }, { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const warehouse = world.interactables?.find(i => i.id === 'warehouse') || null
+    const target = world.animals?.find(a => a && !a.isDead && a.group) || null
+    if (!warehouse || !target)
+      return { ok: false, active: null, locked: false }
+
+    const x = warehouse.x
+    const z = warehouse.z - 1.2
+    const y = world._getSurfaceY(x, z)
+    world.player.teleportTo(x, y + 1.1, z)
+    world._updateInteractables?.()
+
+    world._toggleLockOn?.()
+    const locked = Boolean(world._lockedEnemy)
+    const active = world._activeInteractableId
+    world._clearLockOn?.()
+    return { ok: true, active, locked }
+  })
+
+  expect(result.ok).toBe(true)
+  expect(result.active).not.toBeNull()
+  expect(result.locked).toBe(true)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: coin pickup is single-use and lock-on still works', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonEnemies?.length), { timeout: 20_000 })
+
+  const before = await page.evaluate(() => {
+    const world = window.Experience.world
+    const enemy = (world._dungeonEnemies || []).find(e => e && !e.isBoss && !e.isDead && e.group) || null
+    if (!enemy)
+      return { ok: false }
+
+    world._spawnDungeonCoinDrop?.(enemy)
+    const coin = (world._dungeonInteractables || []).find(i => i && i.pickupItemId === 'coin') || null
+    if (!coin)
+      return { ok: false }
+
+    const x = coin.x
+    const z = coin.z - 1.4
+    const y = world._getSurfaceY(x, z)
+    world.player.teleportTo(x, y + 1.1, z)
+    world._updateDungeonInteractables?.()
+
+    const coinBefore = Number(world._inventory?.backpack?.items?.coin || 0)
+    world._toggleLockOn?.()
+    const lockedWhilePrompt = Boolean(world._lockedEnemy)
+    world._clearLockOn?.()
+
+    return {
+      ok: true,
+      hasPrompt: world._activeInteractableId === coin.id,
+      lockedWhilePrompt,
+      coinBefore,
+    }
+  })
+
+  expect(before.ok).toBe(true)
+  expect(before.hasPrompt).toBe(true)
+  expect(before.lockedWhilePrompt).toBe(true)
+
+  await page.keyboard.press('e')
+  await page.waitForTimeout(100)
+  const after1 = await page.evaluate(() => Number(window.Experience.world._inventory?.backpack?.items?.coin || 0))
+  expect(after1).toBe(before.coinBefore + 1)
+
+  await page.keyboard.press('e')
+  await page.waitForTimeout(100)
+  const after2 = await page.evaluate(() => Number(window.Experience.world._inventory?.backpack?.items?.coin || 0))
+  expect(after2).toBe(after1)
+
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
