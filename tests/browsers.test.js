@@ -713,6 +713,108 @@ test('dungeon: desert chest has clear air around it (not occluded by blocks)', a
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
 
+test('dungeon: snow chest has clear air around it (not occluded by blocks)', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonInteractables?.length), { timeout: 20_000 })
+
+  const ok = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const chest = (world._dungeonInteractables || []).find(i => i && i.lockedChestId) || null
+    if (!chest)
+      return { ok: false, reason: 'no chest' }
+    const floorBlockY = Math.floor(Number(chest.y) || 0)
+    const x = Math.floor(chest.x)
+    const z = Math.floor(chest.z)
+    const ids = []
+    for (let dy = 1; dy <= 10; dy++) {
+      const b = cm.getBlockWorld(x, floorBlockY + dy, z)
+      ids.push(b?.id ?? null)
+    }
+    const clear = ids.every(id => id === 0)
+    return { ok: clear, ids }
+  })
+
+  expect(ok.ok).toBe(true)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: each themed type generates expected enemies', async ({ page }) => {
+  test.setTimeout(120_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._blockDungeonGenerator), { timeout: 60_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const gen = world._blockDungeonGenerator
+    const hub = world._hubCenter
+    const baseX = (hub?.x ?? 32) + 180
+    const baseZ = (hub?.z ?? 32) + 180
+    const types = ['forest', 'plains', 'desert', 'snow']
+    const out = {}
+    for (const t of types) {
+      const info = gen.generate(baseX + Math.floor(Math.random() * 6), baseZ + Math.floor(Math.random() * 6), t)
+      const enemies = info?.enemies || []
+      const boss = enemies.filter(e => e?.isBoss).length
+      out[t] = { count: enemies.length, boss }
+    }
+    return out
+  })
+
+  expect(result.forest.count).toBeGreaterThanOrEqual(5)
+  expect(result.forest.boss).toBeGreaterThanOrEqual(1)
+  expect(result.plains.count).toBeGreaterThanOrEqual(5)
+  expect(result.plains.boss).toBeGreaterThanOrEqual(1)
+  expect(result.desert.count).toBeGreaterThanOrEqual(5)
+  expect(result.desert.boss).toBeGreaterThanOrEqual(1)
+  expect(result.snow.count).toBeGreaterThanOrEqual(5)
+  expect(result.snow.boss).toBeGreaterThanOrEqual(1)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
 test('dungeon: layout has 4 fight rooms with branching/loop and themed boss', async ({ page }) => {
   test.setTimeout(120_000)
   const consoleErrors = []

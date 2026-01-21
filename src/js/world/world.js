@@ -3121,9 +3121,9 @@ export default class World {
         const baseY = Math.floor(Number(item.y) || 0)
         const cx = Math.floor(Number(item.x) || 0)
         const cz = Math.floor(Number(item.z) || 0)
-        for (let dy = 1; dy <= 7; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            for (let dz = -1; dz <= 1; dz++) {
+        for (let dy = 1; dy <= 12; dy++) {
+          for (let dx = -2; dx <= 2; dx++) {
+            for (let dz = -2; dz <= 2; dz++) {
               this.chunkManager?.removeBlockWorld?.(cx + dx, baseY + dy, cz + dz)
             }
           }

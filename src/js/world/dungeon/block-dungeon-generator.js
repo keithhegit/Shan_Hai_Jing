@@ -209,6 +209,30 @@ export default class BlockDungeonGenerator {
       interactables.push({ x: bossCenter.x + perpX * 2, y: surfaceY, z: bossCenter.z + perpZ * 2 })
     interactables.push({ x: entranceCenter.x - perpX * 2, y: surfaceY, z: entranceCenter.z - perpZ * 2 })
 
+    if (enemyPositions.length === 0) {
+      const bossRoom2 = layout.rooms.find(r => r.type === 'boss') || null
+      for (const room of layout.rooms) {
+        const roomType = String(room.type || '')
+        const match = roomType.match(/^fight(\d)$/)
+        const stage = match ? Math.max(1, Math.min(4, Number(match[1]) || 1)) : null
+        if (!stage)
+          continue
+        const cx = startX + dir.x * room.l + (-dir.z * room.w)
+        const cz = startZ + dir.z * room.l + (dir.x * room.w)
+        const pool = this._getEnemyPool(type, stage)
+        const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+        enemyPositions.push({ x: cx, y: floorBlockY + 0.5, z: cz, isBoss: false, stage, type: adds[0], hp: 3 + stage, scale: 1 })
+      }
+      if (bossRoom2) {
+        const cx = startX + dir.x * bossRoom2.l + (-dir.z * bossRoom2.w)
+        const cz = startZ + dir.z * bossRoom2.l + (dir.x * bossRoom2.w)
+        const pool = this._getEnemyPool(type, 4)
+        const adds = pool?.adds?.length ? pool.adds : ['skeleton']
+        const bossType = pool?.boss || adds[0] || 'skeleton'
+        enemyPositions.push({ x: cx, y: floorBlockY + 0.5, z: cz, isBoss: true, stage: 4, type: bossType, hp: 14, scale: 1.35 })
+      }
+    }
+
     return {
       surfaceY,
       spawn: { x: spawnX, y: surfaceY + 0.1, z: spawnZ },
