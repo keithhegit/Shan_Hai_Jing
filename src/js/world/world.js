@@ -10,6 +10,10 @@ import BlockDungeonGenerator from './dungeon/block-dungeon-generator.js'
 import HumanoidEnemy from './enemies/humanoid-enemy.js'
 import Environment from './environment.js'
 import Player from './player/player.js'
+import BeamsSystem from './systems/beams-system.js'
+import InventorySystem from './systems/inventory-system.js'
+import SystemManager from './systems/system-manager.js'
+import createWorldContext from './systems/world-context.js'
 import { blocks } from './terrain/blocks-config.js'
 import ChunkManager from './terrain/chunk-manager.js'
 
@@ -33,6 +37,7 @@ export default class World {
     this._dungeonCompleted = false
     this._activeDungeonPortalId = null
     this._dungeonSurfaceY = null
+    this._dungeonSpawn = null
     this._portalDungeonProgress = this._loadPortalDungeonProgress()
     this._activeDungeonExit = null
     this._activeDungeonExitPrompt = null
@@ -59,51 +64,8 @@ export default class World {
     this.chunkManager = null
     this.portals = []
 
-    this._inventory = this._loadInventory()
-    this._inventoryConfig = {
-      backpack: { slots: 24, maxWeight: 60 },
-      grid: { cols: 8, rows: 6 },
-      gridMask: [
-        [0, 1, 1, 1, 1, 1, 1, 0],
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [1, 1, 1, 1, 1, 1, 1, 1],
-        [0, 1, 1, 1, 1, 1, 1, 0],
-      ],
-      itemSizes: {
-        canister_small: { w: 1, h: 1 },
-        canister_medium: { w: 1, h: 2 },
-        canister_large: { w: 2, h: 2 },
-      },
-      itemWeights: {
-        stone: 1,
-        fence: 4,
-        coin: 0,
-        crystal_big: 6,
-        crystal_small: 3,
-        canister_small: 4,
-        canister_medium: 8,
-        canister_large: 16,
-        material_gun: 2,
-        Axe_Wood: 4,
-        Axe_Stone: 5,
-        Axe_Gold: 4,
-        Axe_Diamond: 6,
-        Pickaxe_Wood: 4,
-        Pickaxe_Stone: 5,
-        Pickaxe_Gold: 4,
-        Pickaxe_Diamond: 6,
-        Shovel_Wood: 3,
-        Shovel_Stone: 4,
-        Shovel_Gold: 3,
-        Shovel_Diamond: 5,
-        Sword_Wood: 3,
-        Sword_Stone: 4,
-        Sword_Gold: 3,
-        Sword_Diamond: 5,
-      },
-    }
+    this._inventory = null
+    this._inventoryConfig = null
     this._toolLootPool = [
       'Axe_Wood',
       'Axe_Stone',
@@ -160,8 +122,11 @@ export default class World {
     this._heartHudLowHp = false
     this._npcStats = this._createNpcStatsTable()
 
-    this._initMaterialGunBeam()
-    this._initCaptureBeam()
+    this._systemManager = new SystemManager(createWorldContext(this))
+    this._beamsSystem = new BeamsSystem()
+    this._systemManager.register(this._beamsSystem)
+    this.inventorySystem = new InventorySystem()
+    this._systemManager.register(this.inventorySystem)
 
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
@@ -567,42 +532,6 @@ export default class World {
     }
   }
 
-  _initMaterialGunBeam() {
-    const radius = 0.09
-    const geo = new THREE.CylinderGeometry(radius, radius, 1, 10, 1, true)
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xFF_3B_3B,
-      transparent: true,
-      opacity: 0.9,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-    })
-    const beam = new THREE.Mesh(geo, mat)
-    beam.frustumCulled = false
-    beam.visible = false
-    this._materialGunBeam = beam
-    this.scene.add(beam)
-  }
-
-  _initCaptureBeam() {
-    const radius = 0.07
-    const geo = new THREE.CylinderGeometry(radius, radius, 1, 10, 1, true)
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0x66FFAA,
-      transparent: true,
-      opacity: 0.85,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-    })
-    const beam = new THREE.Mesh(geo, mat)
-    beam.frustumCulled = false
-    beam.visible = false
-    this._captureBeam = beam
-    this.scene.add(beam)
-  }
-
   _initCanisterVisuals() {
     if (!this.player?.movement?.group)
       return
@@ -797,8 +726,9 @@ export default class World {
     if (this.currentWorld !== 'dungeon')
       return null
     const target = this._lockedEnemy
-    const ratio = (target.maxHp || 1) > 0 ? (target.hp / target.maxHp) : 0
-    if (ratio > 0.15)
+    const maxHp = Math.max(1, Math.floor(Number(target.maxHp) || 1))
+    const threshold = Math.max(1, Math.ceil(maxHp * 0.15))
+    if (target.hp > threshold)
       return null
     if (!target.isStunned?.())
       return null
@@ -823,6 +753,10 @@ export default class World {
     this._captureTarget = target
     this._captureStartAt = now
     this._captureState = 'channeling'
+
+    if (Number.isFinite(Number(target?._stunnedUntil))) {
+      target._stunnedUntil = Math.max(target._stunnedUntil, now + (this._captureDurationMs ?? 4000) + 250)
+    }
 
     this.player.setControlLocked?.(true)
     this.player.setSpeedMultiplier?.(0)
@@ -906,21 +840,7 @@ export default class World {
     const end = this._getEnemyLockTargetPos(this._captureTarget)
       || new THREE.Vector3(this._captureTarget.group.position.x, this._captureTarget.group.position.y + 1.35, this._captureTarget.group.position.z)
 
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    const dz = end.z - start.z
-    const d2 = dx * dx + dy * dy + dz * dz
-    const len = Math.sqrt(Math.max(0.000001, d2))
-    const mid = new THREE.Vector3(
-      (start.x + end.x) * 0.5,
-      (start.y + end.y) * 0.5,
-      (start.z + end.z) * 0.5,
-    )
-    const dir = new THREE.Vector3(dx, dy, dz).multiplyScalar(1 / len)
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
-    this._captureBeam.position.copy(mid)
-    this._captureBeam.quaternion.copy(q)
-    this._captureBeam.scale.set(1, len, 1)
+    this._beamsSystem?.updateBeam?.(this, 'capture', start, end)
     this._captureBeam.visible = true
   }
 
@@ -942,8 +862,9 @@ export default class World {
     }
 
     const now = this.experience.time?.elapsed ?? 0
-    const ratio = (target.maxHp || 1) > 0 ? (target.hp / target.maxHp) : 0
-    if (ratio > 0.15 || !target.isStunned?.(now)) {
+    const maxHp = Math.max(1, Math.floor(Number(target.maxHp) || 1))
+    const threshold = Math.max(1, Math.ceil(maxHp * 0.15))
+    if (target.hp > threshold || !target.isStunned?.(now)) {
       this._breakCapture({ reason: 'invalid', healTarget: false })
       return
     }
@@ -1067,18 +988,7 @@ export default class World {
     this._materialGunBeamPositions[5] = end.z
 
     const beam = this._materialGunBeam
-    const len = Math.sqrt(d2)
-    const mid = new THREE.Vector3(
-      (start.x + end.x) * 0.5,
-      (start.y + end.y) * 0.5,
-      (start.z + end.z) * 0.5,
-    )
-    const dir = new THREE.Vector3(dx, dy, dz).multiplyScalar(1 / Math.max(0.000001, len))
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir)
-
-    beam.position.copy(mid)
-    beam.quaternion.copy(q)
-    beam.scale.set(1, len, 1)
+    this._beamsSystem?.updateBeam?.(this, 'material', start, end)
     beam.visible = true
     this.player.setMatterGunAiming(true)
 
@@ -1320,137 +1230,47 @@ export default class World {
   }
 
   _loadInventory() {
-    try {
-      if (typeof window === 'undefined')
-        return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
-      const raw = window.localStorage?.getItem?.('mmmc:inventory_v1')
-      if (!raw)
-        return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
-      const parsed = JSON.parse(raw)
-      const backpack = parsed?.backpack?.items && typeof parsed.backpack.items === 'object'
-        ? parsed.backpack.items
-        : {}
-      const warehouse = parsed?.warehouse?.items && typeof parsed.warehouse.items === 'object'
-        ? parsed.warehouse.items
-        : {}
-      const gridLayoutsRaw = parsed?.gridLayouts && typeof parsed.gridLayouts === 'object'
-        ? parsed.gridLayouts
-        : {}
-      return {
-        backpack: { items: this._sanitizeItemMap(backpack) },
-        warehouse: { items: this._sanitizeItemMap(warehouse) },
-        gridLayouts: this._sanitizeGridLayouts(gridLayoutsRaw),
-      }
-    }
-    catch {
-      return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
-    }
+    return this.inventorySystem?._loadInventory?.()
   }
 
   _sanitizeGridLayouts(raw) {
-    const src = raw && typeof raw === 'object' ? raw : {}
-    const backpack = src?.backpack && typeof src.backpack === 'object' ? src.backpack : {}
-    const next = { backpack: {} }
-    for (const [uid, entry] of Object.entries(backpack)) {
-      if (typeof uid !== 'string' || !entry || typeof entry !== 'object')
-        continue
-      const x = Math.floor(Number(entry.x))
-      const y = Math.floor(Number(entry.y))
-      if (!Number.isFinite(x) || !Number.isFinite(y))
-        continue
-      next.backpack[uid] = {
-        x,
-        y,
-        rotated: !!entry.rotated,
-      }
-    }
-    return next
+    return this.inventorySystem?._sanitizeGridLayouts?.(raw)
   }
 
   _sanitizeItemMap(map) {
-    const next = {}
-    for (const [key, value] of Object.entries(map || {})) {
-      if (typeof key !== 'string')
-        continue
-      const n = Number(value)
-      if (!Number.isFinite(n))
-        continue
-      const count = Math.floor(n)
-      if (count <= 0)
-        continue
-      next[key] = count
-    }
-    return next
+    return this.inventorySystem?._sanitizeItemMap?.(map)
   }
 
   _saveInventoryNow() {
-    try {
-      if (typeof window === 'undefined')
-        return
-      window.localStorage?.setItem?.('mmmc:inventory_v1', JSON.stringify(this._inventory || {}))
-    }
-    catch {
-    }
+    this.inventorySystem?._saveNow?.()
   }
 
   _scheduleInventorySave() {
-    if (this._inventorySaveTimer)
-      clearTimeout(this._inventorySaveTimer)
-    this._inventorySaveTimer = setTimeout(() => {
-      this._inventorySaveTimer = null
-      this._saveInventoryNow()
-    }, 250)
+    this.inventorySystem?.scheduleSave?.()
   }
 
   _getBagItems(bagName) {
-    if (!this._inventory)
-      this._inventory = { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
-    if (!this._inventory.gridLayouts)
-      this._inventory.gridLayouts = { backpack: {} }
-    if (!this._inventory.gridLayouts.backpack)
-      this._inventory.gridLayouts.backpack = {}
-    if (bagName === 'warehouse') {
-      if (!this._inventory.warehouse)
-        this._inventory.warehouse = { items: {} }
-      if (!this._inventory.warehouse.items)
-        this._inventory.warehouse.items = {}
-      return this._inventory.warehouse.items
-    }
-    if (!this._inventory.backpack)
-      this._inventory.backpack = { items: {} }
-    if (!this._inventory.backpack.items)
-      this._inventory.backpack.items = {}
-    return this._inventory.backpack.items
+    return this.inventorySystem?.getBagItems?.(bagName)
   }
 
   _getItemTotalCount(items) {
-    return Object.values(items || {}).reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0)
+    return this.inventorySystem?._getItemTotalCount?.(items)
   }
 
   _getItemWeight(itemId) {
-    const w = this._inventoryConfig?.itemWeights?.[itemId]
-    return Number.isFinite(w) ? w : 1
+    return this.inventorySystem?._getItemWeight?.(itemId)
   }
 
   _getBackpackMaxSlots() {
-    const v = this._inventoryConfig?.backpack?.slots
-    return Number.isFinite(v) ? v : 24
+    return this.inventorySystem?._getBackpackMaxSlots?.()
   }
 
   _getBackpackMaxWeight() {
-    const v = this._inventoryConfig?.backpack?.maxWeight
-    return Number.isFinite(v) ? v : 60
+    return this.inventorySystem?._getBackpackMaxWeight?.()
   }
 
   _getBagWeight(items) {
-    let sum = 0
-    for (const [id, count] of Object.entries(items || {})) {
-      const n = Math.max(0, Math.floor(Number(count) || 0))
-      if (n <= 0)
-        continue
-      sum += this._getItemWeight(id) * n
-    }
-    return sum
+    return this.inventorySystem?._getBagWeight?.(items)
   }
 
   _getResourcePathByKey(resourceKey) {
@@ -1481,14 +1301,8 @@ export default class World {
   _getPortalChestType(portalId) {
     if (!portalId)
       return null
-    if (portalId === 'plains')
-      return 'snow'
-    if (portalId === 'snow')
-      return 'desert'
-    if (portalId === 'desert')
-      return 'forest'
-    if (portalId === 'forest')
-      return 'plains'
+    if (portalId === 'plains' || portalId === 'snow' || portalId === 'desert' || portalId === 'forest')
+      return portalId
     return null
   }
 
@@ -1920,172 +1734,19 @@ export default class World {
   }
 
   _canAddToBackpack(itemId, amount = 1) {
-    const items = this._getBagItems('backpack')
-    const delta = Math.max(0, Math.floor(Number(amount) || 0))
-    if (!itemId || delta <= 0)
-      return false
-
-    const maxSlots = this._getBackpackMaxSlots()
-    const stacks = Object.keys(items || {}).length
-    const needsNewSlot = !Object.prototype.hasOwnProperty.call(items, itemId)
-    if (needsNewSlot && stacks + 1 > maxSlots)
-      return false
-
-    const maxWeight = this._getBackpackMaxWeight()
-    const weight = this._getBagWeight(items)
-    const nextWeight = weight + this._getItemWeight(itemId) * delta
-    if (nextWeight > maxWeight)
-      return false
-
-    return true
+    return this.inventorySystem?._canAddToBackpack?.(itemId, amount)
   }
 
   _emitInventorySummary() {
-    const backpackItems = this._getBagItems('backpack')
-    const warehouseItems = this._getBagItems('warehouse')
-    const backpackWeight = this._getBagWeight(backpackItems)
-    emitter.emit('inventory:summary', {
-      backpackTotal: this._getItemTotalCount(backpackItems),
-      warehouseTotal: this._getItemTotalCount(warehouseItems),
-      backpackStacks: Object.keys(backpackItems).length,
-      warehouseStacks: Object.keys(warehouseItems).length,
-      backpackWeight,
-      backpackMaxWeight: this._getBackpackMaxWeight(),
-      backpackSlots: Object.keys(backpackItems).length,
-      backpackMaxSlots: this._getBackpackMaxSlots(),
-      carriedPet: this._carriedAnimal?.group ? (this._carriedAnimal._typeLabel || this._carriedAnimal._resourceKey || '') : '',
-    })
+    this.inventorySystem?.emitInventorySummary?.()
   }
 
   _emitInventoryState() {
-    const backpackItems = this._getBagItems('backpack')
-    emitter.emit('inventory:update', {
-      panel: this._activeInventoryPanel,
-      backpack: { ...backpackItems },
-      warehouse: { ...this._getBagItems('warehouse') },
-      backpackMeta: {
-        slots: Object.keys(backpackItems).length,
-        maxSlots: this._getBackpackMaxSlots(),
-        weight: this._getBagWeight(backpackItems),
-        maxWeight: this._getBackpackMaxWeight(),
-      },
-      grid: { ...(this._inventoryConfig?.grid || { cols: 8, rows: 6 }) },
-      itemSizes: { ...(this._inventoryConfig?.itemSizes || {}) },
-      backpackGrid: this._buildBackpackGridSnapshot(backpackItems, this._inventory?.gridLayouts?.backpack || {}),
-    })
+    this.inventorySystem?.emitInventoryState?.()
   }
 
   _buildBackpackGridSnapshot(items, layout) {
-    const cfg = this._inventoryConfig?.grid || { cols: 8, rows: 6 }
-    const cols = Math.max(1, Math.floor(Number(cfg.cols) || 8))
-    const rows = Math.max(1, Math.floor(Number(cfg.rows) || 6))
-    const sizes = this._inventoryConfig?.itemSizes || {}
-    const rawMask = Array.isArray(this._inventoryConfig?.gridMask) ? this._inventoryConfig.gridMask : null
-    const mask = Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) => {
-      const v = rawMask?.[y]?.[x]
-      return v === 0 ? 0 : 1
-    }))
-
-    const cells = Array.from({ length: rows }, () => Array.from({ length: cols }, () => null))
-    const placed = []
-    const overflow = []
-
-    const expanded = []
-    let seq = 1
-    for (const [id, count] of Object.entries(items || {})) {
-      const n = Math.max(0, Math.floor(Number(count) || 0))
-      if (n <= 0)
-        continue
-      const size = sizes?.[id] || { w: 1, h: 1 }
-      const w = Math.max(1, Math.floor(Number(size.w) || 1))
-      const h = Math.max(1, Math.floor(Number(size.h) || 1))
-      for (let i = 0; i < n; i++) {
-        expanded.push({
-          uid: `${id}:${seq++}`,
-          itemId: id,
-          w,
-          h,
-        })
-      }
-    }
-
-    const canFitAt = (uid, x, y, w, h) => {
-      if (x < 0 || y < 0 || x + w > cols || y + h > rows)
-        return false
-      for (let yy = y; yy < y + h; yy++) {
-        for (let xx = x; xx < x + w; xx++) {
-          if (mask[yy][xx] === 0)
-            return false
-          const v = cells[yy][xx]
-          if (v && v !== uid)
-            return false
-        }
-      }
-      return true
-    }
-
-    const fill = (uid, x, y, w, h, value) => {
-      for (let yy = y; yy < y + h; yy++) {
-        for (let xx = x; xx < x + w; xx++) {
-          cells[yy][xx] = value
-        }
-      }
-    }
-
-    const preferred = []
-    const remaining = []
-    const layoutMap = layout && typeof layout === 'object' ? layout : {}
-    for (const item of expanded) {
-      const pref = layoutMap?.[item.uid]
-      if (pref && typeof pref === 'object') {
-        const baseW = item.w
-        const baseH = item.h
-        const rotated = !!pref.rotated
-        const w = rotated ? baseH : baseW
-        const h = rotated ? baseW : baseH
-        preferred.push({ ...item, x: Math.floor(Number(pref.x)), y: Math.floor(Number(pref.y)), w, h, rotated })
-      }
-      else {
-        remaining.push(item)
-      }
-    }
-
-    for (const item of preferred) {
-      if (Number.isFinite(item.x) && Number.isFinite(item.y) && canFitAt(item.uid, item.x, item.y, item.w, item.h)) {
-        fill(item.uid, item.x, item.y, item.w, item.h, item.uid)
-        placed.push({ uid: item.uid, itemId: item.itemId, w: item.w, h: item.h, x: item.x, y: item.y, rotated: item.rotated })
-      }
-      else {
-        remaining.push({ uid: item.uid, itemId: item.itemId, w: item.rotated ? item.h : item.w, h: item.rotated ? item.w : item.h })
-      }
-    }
-
-    for (const item of remaining) {
-      let found = null
-      for (let y = 0; y < rows && !found; y++) {
-        for (let x = 0; x < cols; x++) {
-          if (canFitAt(item.uid, x, y, item.w, item.h)) {
-            found = { x, y, w: item.w, h: item.h, rotated: false }
-            break
-          }
-        }
-      }
-      if (!found) {
-        overflow.push({ ...item, x: -1, y: -1, rotated: false })
-        continue
-      }
-      fill(item.uid, found.x, found.y, found.w, found.h, item.uid)
-      placed.push({ ...item, ...found })
-    }
-
-    return {
-      cols,
-      rows,
-      mask,
-      cells,
-      items: placed,
-      overflow,
-    }
+    return this.inventorySystem?.buildBackpackGridSnapshot?.(items, layout)
   }
 
   _toggleInventoryPanel(panel) {
@@ -2138,86 +1799,19 @@ export default class World {
   }
 
   _addInventoryItem(bagName, itemId, amount = 1) {
-    const items = this._getBagItems(bagName)
-    const delta = Math.max(0, Math.floor(Number(amount) || 0))
-    if (!itemId || delta <= 0)
-      return
-    if (bagName === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
-      emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}` })
-      return
-    }
-    items[itemId] = (items[itemId] || 0) + delta
-    this._emitInventorySummary()
-    this._emitInventoryState()
-    this._updateCanisterVisuals()
-    this._applyBurdenEffects()
-    this._scheduleInventorySave()
+    this.inventorySystem?.addItem?.(bagName, itemId, amount)
   }
 
   _removeInventoryItem(bagName, itemId, amount = 1) {
-    const items = this._getBagItems(bagName)
-    const delta = Math.max(0, Math.floor(Number(amount) || 0))
-    if (!itemId || delta <= 0)
-      return false
-    const current = items[itemId] || 0
-    if (current < delta)
-      return false
-    const next = current - delta
-    if (next <= 0)
-      delete items[itemId]
-    else
-      items[itemId] = next
-    this._emitInventorySummary()
-    this._emitInventoryState()
-    this._updateCanisterVisuals()
-    this._applyBurdenEffects()
-    this._scheduleInventorySave()
-    return true
+    return this.inventorySystem?.removeItem?.(bagName, itemId, amount)
   }
 
   _transferInventory(payload) {
-    const from = payload?.from
-    const to = payload?.to
-    const itemId = payload?.itemId
-    const amount = payload?.amount ?? 1
-    if (!from || !to || from === to || !itemId)
-      return
-    if ((from === 'warehouse' || to === 'warehouse') && (this.currentWorld !== 'hub' || this._activeInventoryPanel !== 'warehouse' || this._activeInteractable?.id !== 'warehouse'))
-      return
-    const delta = Math.max(0, Math.floor(Number(amount) || 0))
-    if (to === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
-      emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}` })
-      return
-    }
-    const ok = this._removeInventoryItem(from, itemId, amount)
-    if (!ok)
-      return
-    this._addInventoryItem(to, itemId, amount)
+    this.inventorySystem?.transfer?.(payload)
   }
 
   _placeBackpackGridItem(payload) {
-    const uid = payload?.uid
-    const x = Math.floor(Number(payload?.x))
-    const y = Math.floor(Number(payload?.y))
-    const rotated = !!payload?.rotated
-    if (!uid || !Number.isFinite(x) || !Number.isFinite(y))
-      return
-
-    const items = this._getBagItems('backpack')
-    const base = this._inventory?.gridLayouts?.backpack || {}
-    const next = { ...base, [uid]: { x, y, rotated } }
-    const snapshot = this._buildBackpackGridSnapshot(items, next)
-    const placed = (snapshot?.items || []).find(i => i.uid === uid) || null
-    if (!placed || placed.x !== x || placed.y !== y || !!placed.rotated !== rotated) {
-      emitter.emit('dungeon:toast', { text: '无法放置到该位置' })
-      return
-    }
-
-    if (!this._inventory.gridLayouts)
-      this._inventory.gridLayouts = { backpack: {} }
-    this._inventory.gridLayouts.backpack = next
-    this._emitInventoryState()
-    this._scheduleInventorySave()
+    this.inventorySystem?.placeBackpackGridItem?.(payload)
   }
 
   _getSurfaceY(worldX, worldZ) {
@@ -2824,6 +2418,8 @@ export default class World {
     // 只需要生成 Exit 标记和 Enemy/Interactables
 
     const { surfaceY, spawn, exit, enemies, interactables, reward } = dungeonInfo
+    if (spawn)
+      this.chunkManager?.forceSyncGenerateArea?.(spawn.x, spawn.z, 1)
 
     // Exit Mesh (保持视觉标记)
     const exitGeometry = new THREE.TorusGeometry(1.55, 0.22, 16, 48)
@@ -2879,6 +2475,7 @@ export default class World {
     this._dungeonRewardPending = reward || null
     this._dungeonRewardSpawned = false
     this._dungeonSurfaceY = Number.isFinite(Number(surfaceY)) ? (Number(surfaceY) + 0.05) : null
+    this._dungeonSpawn = spawn ? { ...spawn } : null
 
     // 初始化交互物 (使用 generator 返回的位置)
     this._initDungeonInteractablesV2(interactables, portal.id)
@@ -3007,6 +2604,7 @@ export default class World {
       this._dungeonCompleted = false
       this._activeDungeonPortalId = null
       this._dungeonSurfaceY = null
+      this._dungeonSpawn = null
       this._activeDungeonExitPrompt = null
       this._lockedEnemy = null
       this._dungeonRewardPending = null
@@ -3222,6 +2820,14 @@ export default class World {
         const baseY = Math.floor(Number(item.y) || 0)
         const cx = Math.floor(Number(item.x) || 0)
         const cz = Math.floor(Number(item.z) || 0)
+        this.chunkManager?.removePlantsInWorldBoxes?.([{
+          minX: cx - 3,
+          maxX: cx + 3,
+          minZ: cz - 3,
+          maxZ: cz + 3,
+          minY: baseY,
+          maxY: baseY + 20,
+        }])
         for (let dy = 1; dy <= 12; dy++) {
           for (let dx = -2; dx <= 2; dx++) {
             for (let dz = -2; dz <= 2; dz++) {
@@ -3245,9 +2851,20 @@ export default class World {
         mesh = new THREE.Mesh(geometry, material)
       }
 
-      mesh.position.set(item.x, (item.y ?? 0) + 0.5, item.z)
-      if (item.lockedChestId)
+      if (item.lockedChestId) {
+        const baseY = Math.floor(Number(item.y) || 0)
+        mesh.position.set(item.x, baseY + 1.0, item.z)
+        const targetBottom = baseY + 1.0
+        const minY = this._getMinYFromObject(mesh, null)
+        if (Number.isFinite(minY)) {
+          const dy = targetBottom - minY + 0.02
+          mesh.position.y += dy
+        }
         mesh.renderOrder = 4
+      }
+      else {
+        mesh.position.set(item.x, (item.y ?? 0) + 0.5, item.z)
+      }
       this._dungeonInteractablesGroup.add(mesh)
 
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
@@ -4273,6 +3890,7 @@ export default class World {
 
     const dt = this.experience.time.delta * 0.001
     const t = (this.experience.time.elapsed ?? 0) * 0.001
+    this._systemManager?.update?.(dt, t)
 
     // Step2：先做 chunk streaming，确保玩家碰撞查询能尽量命中已加载 chunk
     if (this.chunkManager && this.player) {
@@ -4367,6 +3985,19 @@ export default class World {
       if (Number.isFinite(radius) && radius > 0.05)
         return radius
       return fallback
+    }
+    catch {
+      return fallback
+    }
+  }
+
+  _getMinYFromObject(object3d, fallback = null) {
+    try {
+      if (!object3d)
+        return fallback
+      const box = new THREE.Box3().setFromObject(object3d)
+      const y = box.min?.y
+      return Number.isFinite(y) ? y : fallback
     }
     catch {
       return fallback
@@ -4521,6 +4152,7 @@ export default class World {
 
   destroy() {
     // Destroy child components
+    this._systemManager?.destroy?.()
     this.blockSelectionHelper?.dispose()
     this.blockRaycaster?.destroy()
     this.environment?.destroy()

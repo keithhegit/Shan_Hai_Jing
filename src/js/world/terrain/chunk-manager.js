@@ -462,6 +462,35 @@ export default class ChunkManager {
     this.idleQueue.pump()
   }
 
+  forceSyncGenerateArea(worldX, worldZ, radiusChunks = 1) {
+    const x = Number(worldX)
+    const z = Number(worldZ)
+    const r = Math.max(0, Math.floor(Number(radiusChunks) || 0))
+    if (!Number.isFinite(x) || !Number.isFinite(z))
+      return
+    const ccx = Math.floor(x / this.chunkWidth)
+    const ccz = Math.floor(z / this.chunkWidth)
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const chunk = this._ensureChunk(ccx + dx, ccz + dz)
+        if (!chunk || chunk.state === 'disposed')
+          continue
+        if (chunk.state === 'init') {
+          chunk.generator.params.seed = this.seed
+          chunk.generateData()
+        }
+        if (chunk._pendingModifications)
+          this._applyChunkModifications(chunk)
+        if (chunk.state === 'dataReady') {
+          const built = chunk.buildMesh()
+          if (built)
+            chunk.renderer?.group?.scale?.setScalar?.(this.renderParams.scale)
+        }
+      }
+    }
+    this._updateStats()
+  }
+
   // 新增：延迟保存（避免频繁写入）
   _scheduleSave() {
     if (this._saveTimeout) {
