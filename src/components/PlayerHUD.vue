@@ -6,6 +6,7 @@ const staminaPercent = ref(100)
 const hp = ref(5)
 const maxHp = ref(5)
 const inventorySummary = ref({ backpackTotal: 0, warehouseTotal: 0, carriedPet: '' })
+const captureHint = ref(null)
 
 function updateStats(stats) {
   if (stats.hp !== undefined)
@@ -20,14 +21,20 @@ function updateInventorySummary(payload) {
   inventorySummary.value = payload || { backpackTotal: 0, warehouseTotal: 0, carriedPet: '' }
 }
 
+function onCaptureHint(payload) {
+  captureHint.value = payload || null
+}
+
 onMounted(() => {
   emitter.on('ui:update_stats', updateStats)
   emitter.on('inventory:summary', updateInventorySummary)
+  emitter.on('ui:capture_hint', onCaptureHint)
 })
 
 onBeforeUnmount(() => {
   emitter.off('ui:update_stats', updateStats)
   emitter.off('inventory:summary', updateInventorySummary)
+  emitter.off('ui:capture_hint', onCaptureHint)
 })
 </script>
 
@@ -53,6 +60,10 @@ onBeforeUnmount(() => {
     <div class="hud-center">
       <div class="stamina-bar-bg">
         <div class="stamina-bar-fill" :style="{ width: `${staminaPercent}%` }" />
+      </div>
+
+      <div v-if="captureHint?.text" class="hud-hint">
+        {{ captureHint.text }}
       </div>
 
       <div class="inventory-summary">
@@ -175,5 +186,16 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hud-hint {
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 999px;
+  backdrop-filter: blur(6px);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 </style>

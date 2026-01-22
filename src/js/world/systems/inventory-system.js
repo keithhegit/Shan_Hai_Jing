@@ -164,7 +164,13 @@ export default class InventorySystem {
     if (!itemId || delta <= 0)
       return
     if (bagName === 'backpack' && !this._canAddToBackpack(itemId, delta)) {
-      emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}` })
+      if (world?.currentWorld === 'dungeon') {
+        world?._spawnDungeonItemDrop?.({ itemId, amount: delta })
+        emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}（已掉落）` })
+      }
+      else {
+        emitter.emit('dungeon:toast', { text: `背包已满或超重：${itemId} x${delta}` })
+      }
       return
     }
     items[itemId] = (items[itemId] || 0) + delta
@@ -378,6 +384,15 @@ export default class InventorySystem {
     if (nextWeight > maxWeight)
       return false
 
+    const layout = this.inventory?.gridLayouts?.backpack || {}
+    const currentSnap = this._buildBackpackGridSnapshot(items, layout)
+    const nextItems = { ...items, [itemId]: (items[itemId] || 0) + delta }
+    const nextSnap = this._buildBackpackGridSnapshot(nextItems, layout)
+    const curOverflow = (currentSnap?.overflow || []).filter(o => o?.itemId === itemId).length
+    const nextOverflow = (nextSnap?.overflow || []).filter(o => o?.itemId === itemId).length
+    if (nextOverflow > curOverflow)
+      return false
+
     return true
   }
 
@@ -405,14 +420,19 @@ export default class InventorySystem {
       const size = sizes?.[id] || { w: 1, h: 1 }
       const w = Math.max(1, Math.floor(Number(size.w) || 1))
       const h = Math.max(1, Math.floor(Number(size.h) || 1))
-      for (let i = 0; i < n; i++) {
+      const isStack = id === 'coin' || String(id).startsWith('key_')
+      if (isStack) {
         expanded.push({
           uid: `${id}:${seq++}`,
           itemId: id,
           w,
           h,
+          count: n,
         })
+        continue
       }
+      for (let i = 0; i < n; i++)
+        expanded.push({ uid: `${id}:${seq++}`, itemId: id, w, h, count: 1 })
     }
 
     const canFitAt = (uid, x, y, w, h) => {
@@ -459,10 +479,10 @@ export default class InventorySystem {
     for (const item of preferred) {
       if (Number.isFinite(item.x) && Number.isFinite(item.y) && canFitAt(item.uid, item.x, item.y, item.w, item.h)) {
         fill(item.uid, item.x, item.y, item.w, item.h, item.uid)
-        placed.push({ uid: item.uid, itemId: item.itemId, w: item.w, h: item.h, x: item.x, y: item.y, rotated: item.rotated })
+        placed.push({ uid: item.uid, itemId: item.itemId, w: item.w, h: item.h, x: item.x, y: item.y, rotated: item.rotated, count: item.count })
       }
       else {
-        remaining.push({ uid: item.uid, itemId: item.itemId, w: item.rotated ? item.h : item.w, h: item.rotated ? item.w : item.h })
+        remaining.push({ uid: item.uid, itemId: item.itemId, w: item.rotated ? item.h : item.w, h: item.rotated ? item.w : item.h, count: item.count })
       }
     }
 

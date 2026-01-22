@@ -125,7 +125,7 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 ### 2.1.2 待修复与行动计划（来自 2026-01-18 反馈）
 
 - 主控模型：恢复 `public/models/character/Character_Male_1.gltf` 为 `playerModel`（入口：`src/js/sources.js`、`src/js/world/player/player.js`）
-- 物质枪外观：将装备模型替换为 `public/models/Tools/heart.glb`（复用 `material_gun` 资源 key）
+- 物质枪外观：将装备模型替换为 `public/models/Environment/crystal2.glb`（复用 `material_gun` 资源 key）
 - 物质枪挂点：装备后将心形渲染在主控左上举高位置，并将射线起点改为该位置（入口：`src/js/world/player/player.js`、`src/js/world/world.js`）
 - 物质枪射线：将当前线段渲染升级为“可见直径”的光束（入口：`src/js/world/world.js`）
 - 宝箱位置：森林/平原/雪原/沙漠宝箱仅在对应地牢出现，不在 Hub 出现（入口：`src/js/world/world.js`）
@@ -156,6 +156,11 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 
 - 资产语义：灵兽罐是“菱形水晶”外观（现状即可，不要求换模型）
 - 规格建议：Small / Medium / Big 用同一资产的缩放与表现差异来表达强度（例如更大、更亮、更厚重），并对应背包占格与负重规则
+
+补充现状（对齐线上可见行为）：
+
+- 捕捉成功后会在地面生成可拾取的 Canister 战利品，不再“直接入背包”
+- 背包放不下时会提示，并保持掉落在地面（可后续整理后再拾取）
 
 5. 网格背包范围与仓库扩容
 

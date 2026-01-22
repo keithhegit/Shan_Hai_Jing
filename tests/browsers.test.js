@@ -447,6 +447,21 @@ test('beams: capture uses heart and material gun uses crystal2', async ({ page }
   expect(result.material).toBe('crystal2')
 })
 
+test('resources: material_gun uses crystal2 model', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  const path = await page.evaluate(() => {
+    const sources = window.Experience?.world?.resources?.sources || []
+    const s = sources.find(x => x?.name === 'material_gun')
+    return s?.path || null
+  })
+
+  expect(path).toBe('models/Environment/crystal2.glb')
+})
+
 test('lock-on: works even when an interactable prompt is active', async ({ page }) => {
   test.setTimeout(120_000)
   const consoleErrors = []
@@ -1063,22 +1078,22 @@ test('capture: holding Q captures stunned low-hp enemy into canister', async ({ 
     const now = world.experience?.time?.elapsed ?? 0
     world._captureStartAt = now - (world._captureDurationMs ?? 4000) - 1
     world._updateCapture?.()
-    const items = world._getBagItems?.('backpack') || {}
-    const n = (items.canister_small || 0) + (items.canister_medium || 0) + (items.canister_large || 0)
+    const drops = (world._dungeonInteractables || []).filter(i => String(i?.pickupItemId || '').startsWith('canister_')).length
     world._captureStartAt = start
     world._captureHolding = false
-    return { canisters: n, captureState: world._captureState || null }
+    return { drops, captureState: world._captureState || null }
   })
 
   const result = await page.evaluate(() => {
     const world = window.Experience.world
     const items = world._getBagItems?.('backpack') || {}
     const n = (items.canister_small || 0) + (items.canister_medium || 0) + (items.canister_large || 0)
-    return { canisters: n, captureState: world._captureState || null, captureHolding: !!world._captureHolding }
+    const drops = (world._dungeonInteractables || []).filter(i => String(i?.pickupItemId || '').startsWith('canister_')).length
+    return { canisters: n, drops, captureState: world._captureState || null, captureHolding: !!world._captureHolding }
   })
 
   expect(finished.captureState).toBe(null)
-  expect(result.canisters, `captureState=${result.captureState} captureHolding=${result.captureHolding}`).toBeGreaterThan(0)
+  expect(result.drops).toBeGreaterThan(0)
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
@@ -1136,6 +1151,98 @@ test('inventory: world exposes inventorySystem facade', async ({ page }) => {
   expect(result.ok).toBe(true)
   expect(result.hasSnapshot).toBe(true)
   expect(result.hasItems).toBe(true)
+})
+
+test('inventory: coin is stack and occupies one grid item', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.inventorySystem), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const sys = window.Experience.world.inventorySystem
+    const snap = sys.buildBackpackGridSnapshot({ coin: 3 }, {})
+    const coins = (snap?.items || []).filter(it => it.itemId === 'coin')
+    const first = coins[0] || null
+    return { n: coins.length, count: first?.count ?? null }
+  })
+
+  expect(result.n).toBe(1)
+  expect(result.count).toBe(3)
+})
+
+test('inventory: when grid has no space, instance item drops instead of adding', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.inventorySystem), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const sys = world.inventorySystem
+    world.currentWorld = 'dungeon'
+    if (!world._dungeonGroup)
+      world._dungeonGroup = { add() {} }
+
+    sys.config.grid = { cols: 1, rows: 1 }
+    sys.config.gridMask = [[1]]
+
+    const before = sys.getBagItems('backpack').Sword_Stone || 0
+    sys.addItem('backpack', 'Sword_Stone', 1)
+    const after = sys.getBagItems('backpack').Sword_Stone || 0
+    const drops = (world._dungeonInteractables || []).filter(i => i?.pickupItemId === 'Sword_Stone').length
+
+    return { before, after, drops }
+  })
+
+  expect(result.before).toBe(0)
+  expect(result.after).toBe(0)
+  expect(result.drops).toBeGreaterThan(0)
+})
+
+test('dungeon: world exposes dungeonSystem facade', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const sys = world?.dungeonSystem || null
+    return {
+      ok: Boolean(sys),
+      hasEnter: typeof sys?.enterDungeon === 'function',
+      hasExit: typeof sys?.exitDungeon === 'function',
+      hasProgress: typeof sys?.emitDungeonProgress === 'function',
+    }
+  })
+
+  expect(result.ok).toBe(true)
+  expect(result.hasEnter).toBe(true)
+  expect(result.hasExit).toBe(true)
+  expect(result.hasProgress).toBe(true)
+})
+
+test('dungeon: boss key drop follows progression cycle', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    return {
+      plains: world._getBossKeyDropForPortalId?.('plains') ?? null,
+      snow: world._getBossKeyDropForPortalId?.('snow') ?? null,
+      desert: world._getBossKeyDropForPortalId?.('desert') ?? null,
+      forest: world._getBossKeyDropForPortalId?.('forest') ?? null,
+    }
+  })
+
+  expect(result.plains).toBe('key_snow')
+  expect(result.snow).toBe('key_desert')
+  expect(result.desert).toBe('key_forest')
+  expect(result.forest).toBe('key_plains')
 })
 
 test('dungeon: each themed type generates expected enemies', async ({ page }) => {

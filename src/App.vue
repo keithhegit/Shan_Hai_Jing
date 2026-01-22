@@ -807,7 +807,13 @@ onBeforeUnmount(() => {
                     }"
                     @pointerdown="(e) => onGridItemPointerDown(e, it.uid)"
                   >
-                    <div class="flex w-full items-center gap-2 overflow-hidden">
+                    <div class="relative flex w-full items-center gap-2 overflow-hidden">
+                      <div
+                        v-if="Number(it.count) > 1"
+                        class="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white/90"
+                      >
+                        x{{ it.count }}
+                      </div>
                       <svg
                         v-if="gridIconKind(it.itemId) === 'coin'"
                         class="h-4 w-4 shrink-0 opacity-90"

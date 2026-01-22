@@ -11,6 +11,7 @@ import HumanoidEnemy from './enemies/humanoid-enemy.js'
 import Environment from './environment.js'
 import Player from './player/player.js'
 import BeamsSystem from './systems/beams-system.js'
+import DungeonSystem from './systems/dungeon-system.js'
 import InventorySystem from './systems/inventory-system.js'
 import SystemManager from './systems/system-manager.js'
 import createWorldContext from './systems/world-context.js'
@@ -127,6 +128,8 @@ export default class World {
     this._systemManager.register(this._beamsSystem)
     this.inventorySystem = new InventorySystem()
     this._systemManager.register(this.inventorySystem)
+    this.dungeonSystem = new DungeonSystem()
+    this._systemManager.register(this.dungeonSystem)
 
     emitter.on('core:ready', () => {
       this.chunkManager = new ChunkManager({
@@ -813,8 +816,10 @@ export default class World {
 
     const canisterId = this._pickCanisterIdForTarget(target)
     if (canisterId) {
-      this._addInventoryItem('backpack', canisterId, 1)
-      emitter.emit('dungeon:toast', { text: `获得：${canisterId}` })
+      const pos = new THREE.Vector3()
+      target.group?.getWorldPosition?.(pos)
+      this._spawnDungeonItemDrop?.({ itemId: canisterId, amount: 1, x: pos.x, z: pos.z })
+      emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（已掉落）` })
     }
 
     this._applyBurdenEffects()
@@ -3831,6 +3836,85 @@ export default class World {
     })
   }
 
+  _spawnDungeonItemDrop({ itemId, amount = 1, x = null, z = null } = {}) {
+    if (this.currentWorld !== 'dungeon')
+      return
+    const n = Math.max(1, Math.floor(Number(amount) || 1))
+    if (!itemId)
+      return
+    if (!this._dungeonInteractables)
+      this._dungeonInteractables = []
+    if (!this._dungeonInteractablesGroup) {
+      this._dungeonInteractablesGroup = new THREE.Group()
+      this._dungeonGroup?.add?.(this._dungeonInteractablesGroup)
+    }
+
+    const baseX = Number.isFinite(Number(x)) ? Number(x) : (this.player?.getPosition?.().x ?? 0)
+    const baseZ = Number.isFinite(Number(z)) ? Number(z) : (this.player?.getPosition?.().z ?? 0)
+    const y = this._getSurfaceY(baseX, baseZ)
+
+    const isStack = itemId === 'coin' || String(itemId).startsWith('key_')
+    const drops = isStack ? 1 : n
+    const perAmount = isStack ? n : 1
+
+    for (let i = 0; i < drops; i++) {
+      const portalId = this._activeDungeonPortalId || 'dungeon'
+      const index = this._dungeonInteractables.length
+      const id = `drop-${portalId}-${index}`
+
+      const jitterX = baseX + (Math.random() - 0.5) * 0.6
+      const jitterZ = baseZ + (Math.random() - 0.5) * 0.6
+
+      let mesh = null
+      if (String(itemId).startsWith('canister_')) {
+        const resource = this.resources.items.canister
+        if (resource?.scene) {
+          mesh = resource.scene.clone(true)
+          const scale = itemId === 'canister_large' ? 0.95 : (itemId === 'canister_medium' ? 0.75 : 0.6)
+          mesh.scale.setScalar(scale)
+        }
+      }
+      else {
+        const resource = this.resources.items[itemId]
+        if (resource?.scene)
+          mesh = resource.scene.clone(true)
+      }
+
+      if (!mesh) {
+        const geometry = new THREE.BoxGeometry(0.5, 0.5, 0.5)
+        const material = new THREE.MeshStandardMaterial({ color: 0x88CCFF, roughness: 0.5, metalness: 0.1, emissive: 0x113355, emissiveIntensity: 0.25 })
+        mesh = new THREE.Mesh(geometry, material)
+      }
+
+      mesh.position.set(jitterX, y + 0.7, jitterZ)
+      mesh.traverse?.((child) => {
+        if (child?.isMesh) {
+          child.castShadow = true
+          child.receiveShadow = true
+        }
+      })
+      this._dungeonInteractablesGroup.add(mesh)
+
+      const hitRadius = this._getHitRadiusFromObject(mesh, 0.6)
+      this._dungeonInteractables.push({
+        id,
+        title: this._getModelFilenameByResourceKey(itemId),
+        description: '战利品。可拾取后放入背包或仓库。',
+        hint: '按 E 拾取',
+        pickupItemId: itemId,
+        pickupAmount: perAmount,
+        x: jitterX,
+        y,
+        z: jitterZ,
+        mesh,
+        hitRadius,
+        range: 2.8,
+        read: false,
+        spinSpeed: 0.03,
+      })
+    }
+  }
+
   _updatePortals() {
     if (!this.player || !this.portals || this.portals.length === 0)
       return
@@ -3971,7 +4055,31 @@ export default class World {
       this._updateLockOn()
     this._updateMaterialGun()
     this._updateCapture()
+    this._updateCaptureHint()
     this._updateNameLabelVisibility()
+  }
+
+  _updateCaptureHint() {
+    const hasPrompt = !!this._captureHintActive
+    if (this.currentWorld !== 'dungeon') {
+      if (hasPrompt) {
+        this._captureHintActive = false
+        emitter.emit('ui:capture_hint', null)
+      }
+      return
+    }
+    const candidate = this._getCaptureCandidate?.()
+    if (candidate) {
+      if (!hasPrompt) {
+        this._captureHintActive = true
+        emitter.emit('ui:capture_hint', { text: '按住 Q 捕捉（目标硬直且残血）' })
+      }
+      return
+    }
+    if (hasPrompt) {
+      this._captureHintActive = false
+      emitter.emit('ui:capture_hint', null)
+    }
   }
 
   _getHitRadiusFromObject(object3d, fallback = 0.9) {
@@ -4373,9 +4481,7 @@ export default class World {
     const id = `dungeon-${portalId}-${index}`
 
     let mesh
-    const keyItemId = portalId === 'plains' || portalId === 'snow' || portalId === 'desert' || portalId === 'forest'
-      ? `key_${portalId}`
-      : null
+    const keyItemId = this._getBossKeyDropForPortalId?.(portalId)
 
     if (keyItemId) {
       const resource = this.resources.items.key
@@ -4442,6 +4548,18 @@ export default class World {
     this._dungeonRewardSpawned = true
     this._emitDungeonProgress()
     this._emitDungeonState()
+  }
+
+  _getBossKeyDropForPortalId(portalId) {
+    if (portalId === 'plains')
+      return 'key_snow'
+    if (portalId === 'snow')
+      return 'key_desert'
+    if (portalId === 'desert')
+      return 'key_forest'
+    if (portalId === 'forest')
+      return 'key_plains'
+    return null
   }
 
   _tryPlayerAttack({ damage, range, minDot, cooldownMs }) {
