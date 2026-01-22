@@ -39,9 +39,10 @@ export default class WarpTunnelController {
     const renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
-      alpha: true,
+      alpha: false,
       powerPreference: 'high-performance',
     })
+    renderer.setClearColor(0x000000, 1)
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
     renderer.toneMapping = THREE.ReinhardToneMapping
     renderer.toneMappingExposure = 1.5

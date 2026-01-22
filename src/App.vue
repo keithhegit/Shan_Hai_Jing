@@ -28,6 +28,27 @@ const gridHover = ref(null)
 const gridCellPx = 42
 const chestModal = ref(null)
 const portalSelectModal = ref(null)
+const visitedPortals = new Set()
+let lastLoadingPortalId = null
+
+function loadVisitedPortals() {
+  try {
+    const raw = window.localStorage?.getItem?.('mmmc:warp_portal_visited_v1')
+    const arr = raw ? JSON.parse(raw) : []
+    if (Array.isArray(arr))
+      arr.forEach(id => visitedPortals.add(String(id)))
+  }
+  catch {
+  }
+}
+
+function saveVisitedPortals() {
+  try {
+    window.localStorage?.setItem?.('mmmc:warp_portal_visited_v1', JSON.stringify(Array.from(visitedPortals)))
+  }
+  catch {
+  }
+}
 
 function onPortalPrompt(payload) {
   portalPrompt.value = payload
@@ -53,10 +74,20 @@ function onLoadingShow(payload) {
   loadingState.value = payload
   warpOverlay.show({ text: 'Portal Initiating' })
   warpOverlay.engageHyperdrive({ durationMs: 6000 })
+  const kind = payload?.kind || null
+  const portalId = payload?.portalId ? String(payload.portalId) : null
+  lastLoadingPortalId = portalId
+  if (kind === 'dungeon-enter' && portalId && !visitedPortals.has(portalId))
+    warpOverlay.whiteoutSoon()
 }
 
 function onLoadingHide() {
   loadingState.value = null
+  if (lastLoadingPortalId) {
+    visitedPortals.add(lastLoadingPortalId)
+    saveVisitedPortals()
+    lastLoadingPortalId = null
+  }
   warpOverlay.completeSoon()
 }
 
@@ -421,6 +452,7 @@ onMounted(() => {
     return
   }
 
+  loadVisitedPortals()
   experience = new Experience(threeCanvas.value)
   emitter.on('portal:prompt', onPortalPrompt)
   emitter.on('portal:prompt_clear', onPortalPromptClear)

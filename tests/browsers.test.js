@@ -1139,6 +1139,58 @@ test('loading: warp overlay shows Portal Initiating', async ({ page }) => {
   await expect(page.locator('#warp-overlay')).toContainText('Portal Initiating')
 })
 
+test('loading: does not show Loading Resources screen at startup', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  const visible = await page.evaluate(() => {
+    const el = document.getElementById('loading-screen')
+    if (!el)
+      return false
+    const style = window.getComputedStyle(el)
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0)
+      return false
+    return true
+  })
+  expect(visible).toBe(false)
+})
+
+test('loading: first dungeon enter quickly reaches whiteout', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#warp-overlay')).toBeVisible({ timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.chunkManager), { timeout: 90_000 })
+
+  await page.evaluate(() => {
+    window.localStorage?.removeItem?.('mmmc:warp_portal_visited_v1')
+    const world = window.Experience?.world
+    if (!world)
+      return
+    world._enterDungeon = () => {}
+    world._emitDungeonState = () => {}
+    world._emitDungeonProgress = () => {}
+    world.chunkManager.updateStreaming = () => {}
+    world.chunkManager.pumpIdleQueue = () => {}
+    world._blockDungeonGenerator.generate = () => ({
+      surfaceY: 0,
+      spawn: { x: 0, y: 0, z: 0 },
+      exit: { x: 0, y: 0, z: 0 },
+      enemies: [],
+      interactables: [],
+      reward: null,
+    })
+    world.chunkManager.forceSyncGenerateArea = () => {}
+    world._activatePortal({ id: 'plains', name: '平原', target: { x: 0, z: 0 } })
+  })
+
+  await page.waitForFunction(() => {
+    const el = document.getElementById('warp-whiteout')
+    if (!el)
+      return false
+    const opacity = Number(window.getComputedStyle(el).opacity || 0)
+    return opacity >= 0.9
+  }, { timeout: 1500 })
+})
+
 test('inventory: world exposes inventorySystem facade', async ({ page }) => {
   test.setTimeout(120_000)
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })

@@ -2391,7 +2391,7 @@ export default class World {
     this.isPaused = true
     emitter.emit('portal:prompt_clear')
     emitter.emit('interactable:prompt_clear')
-    emitter.emit('loading:show', { title: `正在进入：${portal.name}` })
+    emitter.emit('loading:show', { title: `正在进入：${portal.name}`, portalId: portal.id, kind: 'dungeon-enter' })
 
     setTimeout(() => {
       this._enterDungeon(portal)

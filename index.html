@@ -78,11 +78,94 @@
     <!-- ANDROID -->
     <meta name="theme-color" content="#000" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <style id="warp-overlay-style">
+      #warp-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 999999;
+        pointer-events: none;
+        overflow: hidden;
+        background: #000;
+      }
+      #warp-bg {
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        background-image: url("/img/background_camazotz.jpg");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+      }
+      #warp-dim {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      #warp-canvas {
+        position: absolute;
+        inset: 0;
+        z-index: 2;
+        width: 100%;
+        height: 100%;
+      }
+      #warp-whiteout {
+        position: fixed;
+        inset: 0;
+        z-index: 3;
+        background: #fff;
+        opacity: 0;
+        transition: opacity 90ms linear;
+        mix-blend-mode: screen;
+      }
+      #warp-hud {
+        position: absolute;
+        left: 50%;
+        bottom: 48px;
+        transform: translateX(-50%);
+        z-index: 4;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      #warp-pill {
+        padding: 18px 46px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.05);
+        box-shadow: 0 20px 70px rgba(0, 0, 0, 0.75);
+        backdrop-filter: blur(18px);
+        opacity: 1;
+        transform: scale(1);
+        transition: opacity 700ms ease, transform 700ms ease;
+      }
+      #warp-pill-label {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+        letter-spacing: 0.55em;
+        text-transform: uppercase;
+        font-weight: 800;
+        color: rgba(255, 255, 255, 0.92);
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>
+    <div id="warp-overlay" aria-hidden="true">
+      <div id="warp-bg"></div>
+      <div id="warp-dim"></div>
+      <canvas id="warp-canvas"></canvas>
+      <div id="warp-whiteout"></div>
+      <div id="warp-hud">
+        <div id="warp-pill">
+          <div id="warp-pill-label">Portal Initiating</div>
+        </div>
+      </div>
+    </div>
     <!-- Loading 全屏 进度 -->
-    <div id="loading-screen" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-gray-900">
+    <div id="loading-screen" style="display: none" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-gray-900">
       <div class="w-64 space-y-4">
         <div class="text-center">
           <h2 class="text-xl font-semibold text-white mb-2">Loading Resources</h2>

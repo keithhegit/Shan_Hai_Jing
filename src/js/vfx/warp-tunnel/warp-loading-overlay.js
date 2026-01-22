@@ -7,6 +7,8 @@ class WarpLoadingOverlay {
     this._label = null
     this._white = null
     this._styleTag = null
+    this._bg = null
+    this._dim = null
     this._controller = new WarpTunnelController()
     this._visible = false
     this._progress = 0
@@ -22,47 +24,57 @@ class WarpLoadingOverlay {
     if (this._root)
       return
 
-    const root = document.createElement('div')
-    root.id = 'warp-overlay'
+    const root = document.getElementById('warp-overlay') || document.createElement('div')
+    if (!root.id)
+      root.id = 'warp-overlay'
     root.setAttribute('aria-hidden', 'true')
-    root.style.display = 'none'
 
-    const canvas = document.createElement('canvas')
-    canvas.id = 'warp-canvas'
-    canvas.style.width = '100%'
-    canvas.style.height = '100%'
+    const bg = document.getElementById('warp-bg') || document.createElement('div')
+    if (!bg.id)
+      bg.id = 'warp-bg'
+    const dim = document.getElementById('warp-dim') || document.createElement('div')
+    if (!dim.id)
+      dim.id = 'warp-dim'
+    const canvas = document.getElementById('warp-canvas') || document.createElement('canvas')
+    if (!canvas.id)
+      canvas.id = 'warp-canvas'
+    const white = document.getElementById('warp-whiteout') || document.createElement('div')
+    if (!white.id)
+      white.id = 'warp-whiteout'
+    const hud = document.getElementById('warp-hud') || document.createElement('div')
+    if (!hud.id)
+      hud.id = 'warp-hud'
+    const pill = document.getElementById('warp-pill') || document.createElement('div')
+    if (!pill.id)
+      pill.id = 'warp-pill'
+    const label = document.getElementById('warp-pill-label') || document.createElement('div')
+    if (!label.id)
+      label.id = 'warp-pill-label'
+    if (!label.textContent)
+      label.textContent = 'Portal Initiating'
+    if (!pill.contains(label))
+      pill.appendChild(label)
+    if (!hud.contains(pill))
+      hud.appendChild(pill)
 
-    const white = document.createElement('div')
-    white.id = 'warp-whiteout'
+    if (!root.contains(bg))
+      root.appendChild(bg)
+    if (!root.contains(dim))
+      root.appendChild(dim)
+    if (!root.contains(canvas))
+      root.appendChild(canvas)
+    if (!root.contains(white))
+      root.appendChild(white)
+    if (!root.contains(hud))
+      root.appendChild(hud)
+    if (!document.body.contains(root))
+      document.body.appendChild(root)
 
-    const hud = document.createElement('div')
-    hud.id = 'warp-hud'
-
-    const pill = document.createElement('div')
-    pill.id = 'warp-pill'
-    const label = document.createElement('div')
-    label.id = 'warp-pill-label'
-    label.textContent = 'Portal Initiating'
-    pill.appendChild(label)
-    hud.appendChild(pill)
-
-    root.appendChild(canvas)
-    root.appendChild(white)
-    root.appendChild(hud)
-    document.body.appendChild(root)
-
-    const styleTag = document.createElement('style')
-    styleTag.id = 'warp-overlay-style'
-    styleTag.textContent = `
-#warp-overlay{position:fixed;inset:0;z-index:999999;background:#000;pointer-events:none;overflow:hidden}
-#warp-whiteout{position:fixed;inset:0;background:#fff;opacity:0;transition:opacity 90ms linear;mix-blend-mode:screen}
-#warp-hud{position:absolute;left:50%;bottom:48px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:12px}
-#warp-pill{padding:18px 46px;border-radius:999px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);box-shadow:0 20px 70px rgba(0,0,0,0.75);backdrop-filter:blur(18px);opacity:1;transform:scale(1);transition:opacity 700ms ease,transform 700ms ease}
-#warp-pill-label{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;font-size:11px;letter-spacing:0.55em;text-transform:uppercase;font-weight:800;color:rgba(255,255,255,0.92)}
-    `
-    document.head.appendChild(styleTag)
+    const styleTag = document.getElementById('warp-overlay-style')
 
     this._root = root
+    this._bg = bg
+    this._dim = dim
     this._canvas = canvas
     this._label = label
     this._white = white
@@ -86,6 +98,10 @@ class WarpLoadingOverlay {
     this._root.style.display = 'block'
     this._root.style.opacity = '1'
     this._white.style.opacity = '0'
+    if (this._bg)
+      this._bg.style.opacity = '1'
+    if (this._dim)
+      this._dim.style.opacity = '1'
     this._controller.setSpeedMultiplier(0.2)
     this._controller.start()
   }
@@ -112,6 +128,16 @@ class WarpLoadingOverlay {
     this._engaged = true
     this._hyperdriveDurationMs = Math.min(6000, Math.max(600, Math.floor(Number(durationMs) || 6000)))
     this._hyperdriveStartAt = performance.now()
+  }
+
+  whiteoutSoon() {
+    if (!this._visible)
+      this.show()
+    if (!this._engaged)
+      this.engageHyperdrive({ durationMs: 6000 })
+    const now = performance.now()
+    const remaining = 260
+    this._hyperdriveStartAt = now - (this._hyperdriveDurationMs - remaining)
   }
 
   markReadyToReveal() {
@@ -170,6 +196,10 @@ class WarpLoadingOverlay {
     this._fadeOutAt = null
     this._root.style.display = 'none'
     this._white.style.opacity = '0'
+    if (this._bg)
+      this._bg.style.opacity = '0'
+    if (this._dim)
+      this._dim.style.opacity = '0'
     this._controller.stop()
   }
 
@@ -201,5 +231,8 @@ function startTickLoop() {
 }
 
 startTickLoop()
+
+if (typeof window !== 'undefined')
+  window.WarpOverlay = overlay
 
 export default overlay

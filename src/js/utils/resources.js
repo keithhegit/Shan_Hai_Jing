@@ -158,7 +158,7 @@ export default class Resources {
 
     if (this.loaded === this.toLoad) {
       emitter.emit('core:ready')
-      warpOverlay.markReadyToReveal()
+      warpOverlay.completeSoon()
       if (this.loadingScreen) {
         this.loadingScreen.style.transition = 'opacity 0.25s ease-out'
         this.loadingScreen.style.opacity = '0'
