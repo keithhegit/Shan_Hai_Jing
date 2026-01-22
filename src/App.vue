@@ -7,6 +7,7 @@ import PlayerHUD from './components/PlayerHUD.vue'
 import StoryModal from './components/StoryModal.vue'
 import Experience from './js/experience.js'
 import emitter from './js/utils/event-bus.js'
+import warpOverlay from './js/vfx/warp-tunnel/warp-loading-overlay.js'
 
 const threeCanvas = ref(null)
 let experience = null
@@ -50,10 +51,13 @@ function onInteractableOpen(payload) {
 
 function onLoadingShow(payload) {
   loadingState.value = payload
+  warpOverlay.show({ text: 'Portal Initiating' })
+  warpOverlay.engageHyperdrive({ durationMs: 6000 })
 }
 
 function onLoadingHide() {
   loadingState.value = null
+  warpOverlay.completeSoon()
 }
 
 function onDungeonProgress(payload) {
@@ -961,20 +965,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <div
-      v-if="loadingState"
-      class="pointer-events-none absolute inset-0 z-[12000] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
-    >
-      <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-5 text-center text-white shadow-2xl backdrop-blur-md">
-        <div class="text-lg font-semibold drop-shadow">
-          {{ loadingState.title }}
-        </div>
-        <div class="mx-auto mt-4 h-1.5 w-56 overflow-hidden rounded-full bg-white/15">
-          <div class="h-full w-1/2 animate-pulse rounded-full bg-white/70" />
         </div>
       </div>
     </div>

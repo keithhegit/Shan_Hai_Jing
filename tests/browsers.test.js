@@ -1132,6 +1132,13 @@ test('inventory: grid sizes apply to weapons, keys, and boss canister', async ({
   expect(result.sword).toEqual({ w: 2, h: 4 })
 })
 
+test('loading: warp overlay shows Portal Initiating', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#warp-overlay')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('#warp-overlay')).toContainText('Portal Initiating')
+})
+
 test('inventory: world exposes inventorySystem facade', async ({ page }) => {
   test.setTimeout(120_000)
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
