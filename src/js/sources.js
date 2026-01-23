@@ -55,6 +55,7 @@ export default [
   // ===== Environment =====
   { name: 'chest_closed', type: 'gltfModel', path: 'models/Environment/Chest_Closed.gltf' },
   { name: 'chest_open', type: 'gltfModel', path: 'models/Environment/Chest_Open.gltf' },
+  { name: 'star', type: 'gltfModel', path: 'models/Environment/star.glb' },
   { name: 'key', type: 'gltfModel', path: 'models/Environment/Key.gltf' },
   { name: 'material_gun', type: 'gltfModel', path: 'models/Environment/crystal2.glb' },
   { name: 'heart_ui', type: 'gltfModel', path: 'models/Tools/heart.glb' },

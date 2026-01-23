@@ -287,6 +287,9 @@ export default class World {
       this._onInventoryGridPlace = (payload) => {
         this._placeBackpackGridItem(payload)
       }
+      this._onInventoryDrop = (payload) => {
+        this.inventorySystem?.dropBackpackGridItem?.(payload)
+      }
       this._onWarehousePage = (payload) => {
         this.inventorySystem?.setWarehousePage?.(payload?.page)
       }
@@ -300,6 +303,7 @@ export default class World {
       emitter.on('inventory:transfer', this._onInventoryTransfer)
       emitter.on('inventory:equip', this._onInventoryEquip)
       emitter.on('inventory:grid_place', this._onInventoryGridPlace)
+      emitter.on('inventory:drop', this._onInventoryDrop)
       emitter.on('inventory:warehouse_page', this._onWarehousePage)
       emitter.on('input:grab_pet', this._onGrabPet)
 
@@ -1554,9 +1558,9 @@ export default class World {
       }
 
       let mesh
-      const resource = item.lockedChestId && item.looted
-        ? (this.resources.items.chest_open || this.resources.items.chest_closed)
-        : this.resources.items.chest_closed
+      const resource = item.lockedChestId
+        ? (item.looted ? (this.resources.items.chest_open || this.resources.items.chest_closed) : this.resources.items.chest_closed)
+        : (this.resources.items.star || this.resources.items.chest_closed)
       if (resource?.scene) {
         mesh = resource.scene.clone()
         mesh.scale.set(0.5, 0.5, 0.5)
@@ -1630,13 +1634,6 @@ export default class World {
 
     const items = [
       {
-        id: 'story-1',
-        title: '古旧纸条',
-        description: '“在紫色门后，回声会说出你的名字。”',
-        x: centerX + 4,
-        z: centerZ + 4,
-      },
-      {
         id: 'warehouse',
         title: '仓库',
         description: '存放与取出物品。',
@@ -1644,13 +1641,6 @@ export default class World {
         z: centerZ + 4,
         hint: '按 E 打开仓库',
         openInventoryPanel: 'warehouse',
-      },
-      {
-        id: 'story-3',
-        title: '黯淡水晶',
-        description: '它在你靠近时微微发热，像在等待被唤醒。',
-        x: centerX,
-        z: centerZ - 6,
       },
     ]
 
@@ -2152,6 +2142,8 @@ export default class World {
       emitter.off('inventory:transfer', this._onInventoryTransfer)
     if (this._onWarehousePage)
       emitter.off('inventory:warehouse_page', this._onWarehousePage)
+    if (this._onInventoryDrop)
+      emitter.off('inventory:drop', this._onInventoryDrop)
     if (this._onGrabPet)
       emitter.off('input:grab_pet', this._onGrabPet)
     if (this._onToggleBlockEditMode)

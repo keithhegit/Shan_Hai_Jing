@@ -126,8 +126,14 @@ export default class CombatSystem {
     const hit = target.takeDamage?.(tickDamage)
     if (hit)
       world._forceNpcAggro(target, now + 8000)
+    if (hit) {
+      const label = target?._typeLabel || target?._resourceKey || target?.type || '目标'
+      emitter.emit('ui:log', { text: `光束命中：${label} -${tickDamage}` })
+    }
 
     if (target.isDead && world._lockedEnemy === target) {
+      const label = target?._typeLabel || target?._resourceKey || target?.type || '目标'
+      emitter.emit('ui:log', { text: `击败：${label}` })
       this.clearLockOn()
       this.stopMaterialGunFire()
     }
@@ -359,6 +365,8 @@ export default class CombatSystem {
     const hit = target.takeDamage?.(damage ?? 1)
     if (!hit)
       return
+    const label = target?._typeLabel || target?._resourceKey || target?.type || '敌人'
+    emitter.emit('ui:log', { text: `近战命中：${label} -${damage ?? 1}` })
 
     const p = world.player.getPosition()
     const epos = new THREE.Vector3()
@@ -374,6 +382,7 @@ export default class CombatSystem {
     if (target.isDead) {
       if (world._lockedEnemy === target)
         this.clearLockOn()
+      emitter.emit('ui:log', { text: `击败：${label}` })
     }
   }
 }

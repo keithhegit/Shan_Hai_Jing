@@ -111,10 +111,15 @@ export default class CaptureSystem {
       const heal = Math.max(1, Math.ceil((target.maxHp || 1) * 0.1))
       target.heal(heal)
       emitter.emit('dungeon:toast', { text: '捕捉中断：目标恢复' })
+      emitter.emit('ui:log', { text: '捕捉失败：受击中断（目标恢复）' })
       return
     }
     if (reason === 'release')
       emitter.emit('dungeon:toast', { text: '捕捉取消' })
+    if (reason === 'release')
+      emitter.emit('ui:log', { text: '捕捉取消' })
+    if (reason === 'invalid')
+      emitter.emit('ui:log', { text: '捕捉失败：条件不满足' })
   }
 
   completeCapture() {
@@ -133,9 +138,9 @@ export default class CaptureSystem {
 
     world.player?.setControlLocked?.(false)
 
-    if (!target.isDead) {
-      target.die?.()
-    }
+    if (world._lockedEnemy === target)
+      world.combatSystem?.clearLockOn?.()
+    target.setLocked?.(false)
 
     const canisterId = this.pickCanisterIdForTarget(target)
     if (canisterId) {
@@ -144,10 +149,36 @@ export default class CaptureSystem {
       if (world.currentWorld === 'dungeon') {
         world._spawnDungeonItemDrop?.({ itemId: canisterId, amount: 1, x: pos.x, z: pos.z })
         emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（已掉落）` })
+        emitter.emit('ui:log', { text: `捕捉成功：${canisterId}（已掉落）` })
       }
       else {
-        world._addInventoryItem?.('backpack', canisterId, 1)
-        emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（已放入背包）` })
+        const dropId = world.dropSystem?.spawnHubDrop?.(canisterId, 1, pos.x, pos.z, {
+          persist: true,
+          onPickedUp: () => {
+            const w = this.world
+            if (!w)
+              return
+            if (w._lockedEnemy === target)
+              w.combatSystem?.clearLockOn?.()
+            if (w._carriedAnimal === target)
+              w._dropCarriedAnimal?.()
+            target.group.visible = false
+            target.group.removeFromParent?.()
+            const index = w.animals?.indexOf?.(target) ?? -1
+            if (index >= 0)
+              w.animals.splice(index, 1)
+            emitter.emit('ui:log', { text: '收容罐已拾取：目标已收容' })
+          },
+        })
+        if (dropId) {
+          target.die?.()
+          emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（已掉落）` })
+          emitter.emit('ui:log', { text: `捕捉成功：${canisterId}（已掉落）` })
+        }
+        else {
+          emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（掉落失败）` })
+          emitter.emit('ui:log', { text: `捕捉成功：${canisterId}（掉落失败）` })
+        }
       }
     }
 

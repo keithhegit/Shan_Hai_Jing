@@ -242,6 +242,14 @@ export default class InventorySystem {
     if (!ok)
       return
     this.addItem(to, itemId, amount)
+    const label = world?._getModelFilenameByResourceKey?.(itemId) || itemId
+    const n = Math.max(1, Math.floor(Number(amount) || 1))
+    if (from === 'backpack' && to === 'warehouse')
+      emitter.emit('ui:log', { text: `存入仓库：${label} x${n}` })
+    else if (from === 'warehouse' && to === 'backpack')
+      emitter.emit('ui:log', { text: `取出背包：${label} x${n}` })
+    else
+      emitter.emit('ui:log', { text: `转移：${label} x${n}` })
   }
 
   placeBackpackGridItem(payload) {
@@ -267,6 +275,41 @@ export default class InventorySystem {
     this.inventory.gridLayouts.backpack = next
     this.emitInventoryState()
     this._scheduleSave()
+  }
+
+  dropBackpackGridItem(payload) {
+    const world = this.world
+    const uid = payload?.uid
+    const rawAmount = payload?.amount ?? 1
+    if (!world || !uid)
+      return
+    const amount = Math.max(1, Math.floor(Number(rawAmount) || 1))
+
+    const snapshot = this.getBackpackGridSnapshot()
+    const list = [...(snapshot?.items || []), ...(snapshot?.overflow || [])]
+    const found = list.find(i => i?.uid === uid) || null
+    if (!found?.itemId)
+      return
+
+    const itemId = found.itemId
+    const isStack = itemId === 'coin' || String(itemId).startsWith('key_')
+    const available = Math.max(1, Math.floor(Number(found.count) || 1))
+    const dropCount = isStack ? Math.min(available, amount) : 1
+
+    const ok = this.removeItem('backpack', itemId, dropCount)
+    if (!ok)
+      return
+
+    const p = world.player?.getPosition?.() || { x: 0, z: 0 }
+    if (world.currentWorld === 'dungeon') {
+      world.dropSystem?.spawnDungeonItemDrop?.({ itemId, amount: dropCount, x: p.x, z: p.z })
+    }
+    else if (world.currentWorld === 'hub') {
+      world.dropSystem?.spawnHubDrop?.(itemId, dropCount, p.x, p.z, { persist: true })
+    }
+
+    const label = world._getModelFilenameByResourceKey?.(itemId) || itemId
+    emitter.emit('dungeon:toast', { text: `丢弃：${label} x${dropCount}（已掉落）` })
   }
 
   scheduleSave() {

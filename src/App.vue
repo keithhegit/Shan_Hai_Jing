@@ -25,6 +25,9 @@ const backpackGrid = ref(null)
 const gridState = ref(null)
 const gridDrag = ref(null)
 const gridHover = ref(null)
+const backpackGridPointerEl = ref(null)
+const inventorySelected = ref(null)
+const discardConfirm = ref(null)
 const gridCellPx = 42
 const warehousePage = ref(1)
 const warehousePagesUnlocked = ref(2)
@@ -241,6 +244,16 @@ function onInventoryUpdate(payload) {
   }
   const rawWh = warehouseGrid.value ? toRaw(warehouseGrid.value) : null
   warehouseGridState.value = rawWh ? structuredClone(rawWh) : null
+
+  const selected = inventorySelected.value
+  if (selected?.uid) {
+    const g = gridState.value
+    const found = g ? (g.items || []).find(i => i.uid === selected.uid) : null
+    if (!found)
+      inventorySelected.value = null
+    else
+      inventorySelected.value = { uid: found.uid, itemId: found.itemId, count: found.count }
+  }
 }
 
 function closeInventoryPanel() {
@@ -306,6 +319,20 @@ function itemLabel(id) {
   if (String(id).startsWith('Axe_') || String(id).startsWith('Pickaxe_') || String(id).startsWith('Shovel_') || String(id).startsWith('Sword_'))
     return `${id}.gltf`
   return id
+}
+
+function itemDescription(id) {
+  if (id === 'coin')
+    return '货币。用于解锁仓库页与后续升级。'
+  if (String(id).startsWith('key_'))
+    return '钥匙。用于解锁对应地牢的上锁宝箱。'
+  if (String(id).startsWith('canister_'))
+    return '收容罐。捕捉成功后的实体战利品，占用网格并带来负重压力。'
+  if (id === 'material_gun')
+    return '物质枪。锁定目标后可发射光束造成持续伤害，并触发仇恨追击。'
+  if (id === 'crystal_big' || id === 'crystal_small')
+    return '矿物。用于后续制作与升级。'
+  return '道具。'
 }
 
 function isKeyItem(id) {
@@ -413,12 +440,50 @@ function gridPointerToCell(event) {
   return { x, y }
 }
 
+function selectGridItem(uid) {
+  const item = gridFindItem(uid)
+  if (!item)
+    return
+  inventorySelected.value = { uid: item.uid, itemId: item.itemId, count: item.count }
+}
+
+function openDiscardConfirmByUid(uid) {
+  const item = gridFindItem(uid)
+  if (!item)
+    return
+  const isStack = item.itemId === 'coin' || String(item.itemId).startsWith('key_')
+  const amount = Math.max(1, Math.min(isStack ? 1 : 1, Math.floor(Number(item.count) || 1)))
+  discardConfirm.value = { uid: item.uid, itemId: item.itemId, count: item.count, amount }
+}
+
+function confirmDiscard() {
+  const payload = discardConfirm.value
+  if (!payload?.uid || !payload?.itemId)
+    return
+  emitter.emit('inventory:drop', { uid: payload.uid, amount: payload.amount })
+  if (inventorySelected.value?.uid === payload.uid)
+    inventorySelected.value = null
+  discardConfirm.value = null
+}
+
+function cancelDiscard() {
+  discardConfirm.value = null
+}
+
+function requestDropSelected() {
+  const selected = inventorySelected.value
+  if (!selected?.uid)
+    return
+  openDiscardConfirmByUid(selected.uid)
+}
+
 function onGridItemPointerDown(event, uid) {
   if (!gridState.value)
     return
   const item = gridFindItem(uid)
   if (!item)
     return
+  selectGridItem(uid)
   gridDrag.value = {
     uid,
     startX: item.x,
@@ -428,6 +493,8 @@ function onGridItemPointerDown(event, uid) {
     rotated: !!item.rotated,
   }
   gridHover.value = null
+  if (event.pointerId !== undefined)
+    backpackGridPointerEl.value?.setPointerCapture?.(event.pointerId)
   event.stopPropagation()
   event.preventDefault()
 }
@@ -450,7 +517,8 @@ function onGridPointerUp(event) {
   if (!drag || !grid)
     return
   const cell = gridPointerToCell(event)
-  if (cell && gridCanFit(drag.uid, cell.x, cell.y, drag.w, drag.h)) {
+  const isOutside = !cell || cell.x < 0 || cell.y < 0 || cell.x >= grid.cols || cell.y >= grid.rows
+  if (!isOutside && gridCanFit(drag.uid, cell.x, cell.y, drag.w, drag.h)) {
     const item = gridFindItem(drag.uid)
     if (item) {
       item.x = cell.x
@@ -461,6 +529,9 @@ function onGridPointerUp(event) {
       gridRecomputeCells(grid)
       emitter.emit('inventory:grid_place', { uid: item.uid, x: item.x, y: item.y, rotated: !!item.rotated })
     }
+  }
+  else if (isOutside) {
+    openDiscardConfirmByUid(drag.uid)
   }
   gridDrag.value = null
   gridHover.value = null
@@ -814,7 +885,39 @@ onBeforeUnmount(() => {
       class="absolute inset-0 z-[11000] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
       @click.self="closeInventoryPanel"
     >
-      <div class="w-full max-w-[860px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+      <div class="relative w-full max-w-[860px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+        <div
+          v-if="discardConfirm"
+          class="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-black/60 px-4 backdrop-blur-sm"
+          @click.self="cancelDiscard"
+        >
+          <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-4 shadow-2xl backdrop-blur-md">
+            <div class="text-sm font-bold text-white/90">
+              丢弃道具？
+            </div>
+            <div class="mt-2 text-sm opacity-90">
+              {{ itemLabel(discardConfirm.itemId) }} x{{ discardConfirm.amount }}
+            </div>
+            <div class="mt-3 text-xs opacity-75">
+              丢弃后会掉落在地面，可再次拾取。
+            </div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+              <button
+                class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+                @click="cancelDiscard"
+              >
+                取消
+              </button>
+              <button
+                class="rounded-lg border border-rose-300/30 bg-rose-500/20 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-500/25"
+                @click="confirmDiscard"
+              >
+                丢弃
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="flex items-start justify-between gap-4">
           <div class="text-lg font-semibold drop-shadow">
             {{ inventoryPanel === 'warehouse' ? '仓库' : '背包' }}
@@ -843,6 +946,7 @@ onBeforeUnmount(() => {
                 :style="{ width: `${gridState.cols * gridCellPx + 24}px` }"
               >
                 <div
+                  ref="backpackGridPointerEl"
                   class="relative"
                   :style="{ width: `${gridState.cols * gridCellPx}px`, height: `${gridState.rows * gridCellPx}px` }"
                   @pointermove="onGridPointerMove"
@@ -938,39 +1042,45 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <div v-if="bagEntries(inventoryData.backpack).length === 0" class="text-sm opacity-80">
-                空
-              </div>
-              <div v-else class="space-y-2">
-                <div
-                  v-for="row in bagEntries(inventoryData.backpack)"
-                  :key="`bp:${row.id}`"
-                  class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
-                >
-                  <div class="min-w-0">
-                    <div class="truncate text-sm font-semibold">
-                      {{ itemLabel(row.id) }}
-                    </div>
-                    <div class="text-xs opacity-80">
-                      x{{ row.count }}
-                    </div>
+              <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-sm font-bold text-white/90">
+                    说明
                   </div>
-                  <div class="flex shrink-0 items-center gap-2">
+                  <div class="flex items-center gap-2">
                     <button
-                      v-if="row.id === 'material_gun'"
+                      v-if="inventorySelected?.itemId === 'material_gun'"
                       class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
-                      @click="equipItem(row.id)"
+                      @click="equipItem('material_gun')"
                     >
                       装备/收起
                     </button>
                     <button
-                      v-if="inventoryPanel === 'warehouse'"
+                      v-if="inventoryPanel === 'warehouse' && inventorySelected?.itemId"
                       class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
-                      @click="transferItem('backpack', 'warehouse', row.id, 1)"
+                      @click="transferItem('backpack', 'warehouse', inventorySelected.itemId, 1)"
                     >
                       存入
                     </button>
+                    <button
+                      :disabled="!inventorySelected?.uid"
+                      class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-40"
+                      @click="requestDropSelected"
+                    >
+                      丢弃
+                    </button>
                   </div>
+                </div>
+                <div v-if="inventorySelected?.itemId" class="mt-2">
+                  <div class="text-sm font-semibold">
+                    {{ itemLabel(inventorySelected.itemId) }} <span class="text-xs opacity-80">x{{ Math.max(1, Math.floor(Number(inventorySelected.count) || 1)) }}</span>
+                  </div>
+                  <div class="mt-1 text-xs opacity-80">
+                    {{ itemDescription(inventorySelected.itemId) }}
+                  </div>
+                </div>
+                <div v-else class="mt-2 text-sm opacity-80">
+                  点击选中一个道具以查看说明
                 </div>
               </div>
             </div>

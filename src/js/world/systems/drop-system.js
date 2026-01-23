@@ -24,26 +24,36 @@ export default class DropSystem {
       this.updateHubDrops()
   }
 
-  spawnHubDrop(itemId, count, x, z) {
+  spawnHubDrop(itemId, count, x, z, options = {}) {
     const world = this.world
     if (!world?._hubDropsGroup)
       return null
     const id = `drop_${world._hubDropSeq++}`
-    const mat = world._hubDropMaterials?.[itemId] || world._hubDropMaterials?.default
-    const mesh = new THREE.Mesh(world._hubDropGeo, mat)
-    const y = world._getSurfaceY(x, z) + 0.25
-    mesh.position.set(x, y, z)
+    const groundY = world._getSurfaceY(x, z)
+    let mesh = null
+    if (itemId === 'coin' || String(itemId).startsWith('canister_') || world.resources?.items?.[itemId]?.scene) {
+      mesh = this._createDungeonDropMesh(itemId, x, groundY, z)
+    }
+    if (!mesh) {
+      const mat = world._hubDropMaterials?.[itemId] || world._hubDropMaterials?.default
+      mesh = new THREE.Mesh(world._hubDropGeo, mat)
+      mesh.position.set(x, groundY + 0.25, z)
+    }
     mesh.castShadow = true
     mesh.receiveShadow = true
     world._attachNameLabel(mesh, world._getModelFilenameByResourceKey(itemId), 0.45, 12)
     world._hubDropsGroup.add(mesh)
+    const persist = !!options?.persist
+    const onPickedUp = typeof options?.onPickedUp === 'function' ? options.onPickedUp : null
     world._hubDrops.push({
       id,
       itemId,
       count: Math.max(1, Math.floor(Number(count) || 1)),
       mesh,
-      baseY: y,
+      baseY: mesh.position.y,
       age: 0,
+      persist,
+      onPickedUp,
     })
     return id
   }
@@ -77,7 +87,7 @@ export default class DropSystem {
         continue
       }
       drop.age += dt
-      if (drop.age > 160) {
+      if (!drop.persist && drop.age > 160) {
         drop.mesh.visible = false
         drop.mesh.removeFromParent?.()
         world._hubDrops.splice(i, 1)
@@ -151,6 +161,10 @@ export default class DropSystem {
 
     if (!allowWarehouseFallback) {
       emitter.emit('dungeon:toast', { text: `背包已满或超重：${label} x${n}` })
+      if (itemId === 'canister_large') {
+        emitter.emit('ui:hud_hint', { text: '提示：收容罐（大）占用 4×4 网格，当前背包放不下；可先整理/丢弃道具后再拾取', ttlMs: 4500 })
+        emitter.emit('ui:log', { text: '收容罐（大）未拾取：背包网格不足' })
+      }
       return false
     }
 
@@ -171,7 +185,10 @@ export default class DropSystem {
       return false
     const itemId = removed.itemId || 'stone'
     const count = Math.max(1, Math.floor(Number(removed.count) || 1))
-    return this.pickupItemToInventory({ itemId, count, allowWarehouseFallback: true })
+    const ok = this.pickupItemToInventory({ itemId, count, allowWarehouseFallback: true })
+    if (ok)
+      removed.onPickedUp?.(removed)
+    return ok
   }
 
   spawnDungeonItemDrop({ itemId, amount = 1, x = null, z = null } = {}) {
