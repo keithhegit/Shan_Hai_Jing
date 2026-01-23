@@ -117,6 +117,8 @@ export default class HubNpcSystem {
 
       if (!animal.behavior)
         return
+      if (animal.isDead)
+        return
 
       const data = animal.behavior
 

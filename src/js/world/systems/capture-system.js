@@ -150,6 +150,15 @@ export default class CaptureSystem {
         world._spawnDungeonItemDrop?.({ itemId: canisterId, amount: 1, x: pos.x, z: pos.z })
         emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（已掉落）` })
         emitter.emit('ui:log', { text: `捕捉成功：${canisterId}（已掉落）` })
+
+        target.isDead = true
+        target._coinDropped = true
+        if (target.isBoss)
+          world._dungeonRewardSpawned = true
+        if (target.group) {
+          target.group.visible = false
+          target.group.removeFromParent?.()
+        }
       }
       else {
         const dropId = world.dropSystem?.spawnHubDrop?.(canisterId, 1, pos.x, pos.z, {

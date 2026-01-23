@@ -45,6 +45,7 @@ export default class DropSystem {
     world._hubDropsGroup.add(mesh)
     const persist = !!options?.persist
     const onPickedUp = typeof options?.onPickedUp === 'function' ? options.onPickedUp : null
+    const title = world._getModelFilenameByResourceKey?.(itemId) || itemId
     world._hubDrops.push({
       id,
       itemId,
@@ -52,6 +53,13 @@ export default class DropSystem {
       mesh,
       baseY: mesh.position.y,
       age: 0,
+      x,
+      z,
+      range: 2.2,
+      title,
+      hint: '按 E 拾取',
+      spinSpeed: 0,
+      isHubDrop: true,
       persist,
       onPickedUp,
     })

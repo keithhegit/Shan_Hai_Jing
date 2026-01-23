@@ -1588,20 +1588,25 @@ export default class World {
       this._dungeonInteractablesGroup.add(mesh)
 
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
-      const outlineSize = Math.max(1.08, hitRadius * 2 * 1.08)
-      const outline = new THREE.Mesh(
-        new THREE.BoxGeometry(outlineSize, outlineSize, outlineSize),
-        new THREE.MeshBasicMaterial({
-          color: 0xFF_FF_FF,
-          transparent: true,
-          opacity: 0.9,
-          wireframe: true,
-          depthWrite: false,
-        }),
-      )
-      outline.visible = false
-      outline.position.copy(mesh.position)
-      this._dungeonInteractablesGroup.add(outline)
+      const outline = item.lockedChestId
+        ? (() => {
+            const outlineSize = Math.max(1.08, hitRadius * 2 * 1.08)
+            const outline = new THREE.Mesh(
+              new THREE.BoxGeometry(outlineSize, outlineSize, outlineSize),
+              new THREE.MeshBasicMaterial({
+                color: 0xFF_FF_FF,
+                transparent: true,
+                opacity: 0.9,
+                wireframe: true,
+                depthWrite: false,
+              }),
+            )
+            outline.visible = false
+            outline.position.copy(mesh.position)
+            this._dungeonInteractablesGroup.add(outline)
+            return outline
+          })()
+        : null
 
       const range = item.looted ? 0 : (item.lockedChestId ? 3.0 : 2.6)
 

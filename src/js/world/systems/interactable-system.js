@@ -47,10 +47,13 @@ export default class InteractableSystem {
     if (!world || !world.player)
       return
 
-    if (world.currentWorld === 'hub')
-      this._updateActiveFromList(world.interactables)
-    else if (world.currentWorld === 'dungeon')
+    if (world.currentWorld === 'hub') {
+      const hubDrops = Array.isArray(world._hubDrops) ? world._hubDrops : []
+      this._updateActiveFromList([...(world.interactables || []), ...hubDrops])
+    }
+    else if (world.currentWorld === 'dungeon') {
       this._updateActiveFromList(world._dungeonInteractables)
+    }
   }
 
   _updateActiveFromList(list) {
@@ -110,6 +113,17 @@ export default class InteractableSystem {
       return
 
     if (world._activeInteractable) {
+      if (world._activeInteractable.isHubDrop) {
+        const ok = world.dropSystem?.pickupHubDrop?.(world._activeInteractable)
+        if (!ok)
+          return
+        world._activeInteractable.range = 0
+        world._activeInteractableId = null
+        world._activeInteractable = null
+        emitter.emit('interactable:prompt_clear')
+        emitter.emit('portal:prompt_clear')
+        return
+      }
       if (world._activeInteractable.pickupItemId) {
         if (world._activeInteractable.read) {
           world._activeInteractableId = null
