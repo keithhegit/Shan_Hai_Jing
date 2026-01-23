@@ -10,6 +10,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 
 import Experience from '../experience.js'
+import warpOverlay from '../vfx/warp-tunnel/warp-loading-overlay.js'
 import emitter from './event-bus.js'
 
 export default class Resources {
@@ -26,6 +27,7 @@ export default class Resources {
     this.loadingScreen = document.getElementById('loading-screen')
     this.loadingBar = document.getElementById('loading-bar')
     this.loadingPercentage = document.getElementById('loading-percentage')
+    this._warpOverlayShown = false
 
     this.options = {
       dracoDecoderPath: 'https://www.gstatic.com/draco/v1/decoders/',
@@ -74,6 +76,15 @@ export default class Resources {
   }
 
   startLoading() {
+    if (!this._warpOverlayShown) {
+      this._warpOverlayShown = true
+      warpOverlay.show({ text: 'Portal Initiating' })
+      if (this.loadingBar)
+        this.loadingBar.style.display = 'none'
+      if (this.loadingPercentage)
+        this.loadingPercentage.style.display = 'none'
+    }
+
     for (const source of this.sources) {
       const onLoad = file => this.sourceLoaded(source, file)
       const onError = () => {
@@ -142,25 +153,19 @@ export default class Resources {
 
     // Update loading progress
     const progress = this.loadProgress
-    const percentage = Math.round(progress * 100)
 
-    if (this.loadingBar) {
-      this.loadingBar.style.width = `${percentage}%`
-    }
-    if (this.loadingPercentage) {
-      this.loadingPercentage.textContent = `${percentage}%`
-    }
+    warpOverlay.setProgress(progress)
 
     if (this.loaded === this.toLoad) {
-      // Hide loading screen with fade out animation
+      emitter.emit('core:ready')
+      warpOverlay.completeSoon()
       if (this.loadingScreen) {
-        this.loadingScreen.style.transition = 'opacity 0.5s ease-out'
+        this.loadingScreen.style.transition = 'opacity 0.25s ease-out'
         this.loadingScreen.style.opacity = '0'
         setTimeout(() => {
           this.loadingScreen.style.display = 'none'
-        }, 500)
+        }, 260)
       }
-      emitter.emit('core:ready')
     }
   }
 

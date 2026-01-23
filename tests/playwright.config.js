@@ -1,6 +1,7 @@
+import process from 'node:process'
 import { defineConfig, devices } from '@playwright/test'
 
-import _config from './_config'
+import _config from '../_config'
 
 /**
  * Read environment variables from file.

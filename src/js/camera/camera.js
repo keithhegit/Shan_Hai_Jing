@@ -546,7 +546,12 @@ export default class Camera {
     if (this._obstructedDistance === null)
       this._obstructedDistance = maxDist
     const smooth = THREE.MathUtils.clamp(Number(this.obstruction.smoothSpeed) || 0.18, 0, 1)
-    this._obstructedDistance += (targetDist - this._obstructedDistance) * smooth
+    if (targetDist < this._obstructedDistance) {
+      this._obstructedDistance = targetDist
+    }
+    else {
+      this._obstructedDistance += (targetDist - this._obstructedDistance) * smooth
+    }
 
     return new THREE.Vector3(
       from.x + dir.x * this._obstructedDistance,

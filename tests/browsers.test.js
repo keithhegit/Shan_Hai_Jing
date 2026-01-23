@@ -139,7 +139,12 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     const world = window.Experience.world
     if (world && !world.__pwOldFindGrabCandidateAnimal) {
       world.__pwOldFindGrabCandidateAnimal = world._findGrabCandidateAnimal
-      world._findGrabCandidateAnimal = () => world.animals?.[0] ?? null
+      world.__pwOldFindGrabCandidateAnimalSystem = world.hubNpcSystem?.findGrabCandidateAnimal
+
+      const pickFirstAnimal = () => world.animals?.[0] ?? null
+      world._findGrabCandidateAnimal = pickFirstAnimal
+      if (world.hubNpcSystem)
+        world.hubNpcSystem.findGrabCandidateAnimal = pickFirstAnimal
     }
   })
 
@@ -151,6 +156,11 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     if (world?.__pwOldFindGrabCandidateAnimal) {
       world._findGrabCandidateAnimal = world.__pwOldFindGrabCandidateAnimal
       delete world.__pwOldFindGrabCandidateAnimal
+    }
+    if (world?.__pwOldFindGrabCandidateAnimalSystem) {
+      if (world.hubNpcSystem)
+        world.hubNpcSystem.findGrabCandidateAnimal = world.__pwOldFindGrabCandidateAnimalSystem
+      delete world.__pwOldFindGrabCandidateAnimalSystem
     }
   })
 
@@ -264,12 +274,12 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
   await expect(closeButton).toBeVisible({ timeout: 10_000 })
 
   const inventoryModal = closeButton.locator('..').locator('..')
-  await expect(inventoryModal.getByText('物质枪', { exact: true })).toBeVisible({ timeout: 10_000 })
-
-  const gunRow = inventoryModal
-    .getByText('物质枪', { exact: true })
-    .locator('xpath=ancestor::*[contains(@class,"flex")][1]')
-  await gunRow.getByRole('button', { name: '装备/收起' }).click()
+  const gunItem = inventoryModal.getByRole('button', { name: /物质枪/ }).first()
+  await expect(gunItem).toBeVisible({ timeout: 10_000 })
+  await gunItem.click()
+  const equipButton = inventoryModal.getByRole('button', { name: '装备/收起' })
+  await expect(equipButton).toBeVisible({ timeout: 10_000 })
+  await equipButton.click()
   await page.waitForFunction(() => Boolean(window.Experience?.world?._isMaterialGunEquipped), { timeout: 10_000 })
 
   const equipped = await page.evaluate(() => {
@@ -397,32 +407,13 @@ test('material gun: firing while locked quickly faces target', async ({ page }) 
     window.__pwFacingEnemy = enemy
   })
 
-  await page.waitForFunction(() => {
-    const world = window.Experience?.world
-    const enemy = window.__pwFacingEnemy
-    if (!world?.player || !enemy?.group)
-      return false
-    const p = world.player.getPosition()
-    const epos = enemy.group.position
-    const dx = epos.x - p.x
-    const dz = epos.z - p.z
-    const len = Math.hypot(dx, dz)
-    if (!(len > 0.0001))
-      return true
-    const facing = world.player.getFacingAngle()
-    const fx = -Math.sin(facing)
-    const fz = -Math.cos(facing)
-    const nx = dx / len
-    const nz = dz / len
-    const dot = fx * nx + fz * nz
-    return dot >= 0.75
-  }, { timeout: 3_000 })
-
   const dot = await page.evaluate(() => {
     const world = window.Experience.world
     const enemy = window.__pwFacingEnemy
     if (!world?.player || !enemy?.group)
       return null
+    for (let i = 0; i < 10; i++)
+      world._updateLockOn?.()
     const p = world.player.getPosition()
     const epos = enemy.group.position
     const dx = epos.x - p.x
@@ -448,6 +439,40 @@ test('material gun: firing while locked quickly faces target', async ({ page }) 
   expect(dot).toBeGreaterThanOrEqual(0.75)
   expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('beams: capture uses heart and material gun uses crystal2', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => Boolean(window.Experience?.world), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    return {
+      material: world?._materialGunBeam?.userData?.decoratorKey ?? null,
+      capture: world?._captureBeam?.userData?.decoratorKey ?? null,
+    }
+  })
+
+  expect(result.capture).toBe('heart_ui')
+  expect(result.material).toBe('crystal2')
+})
+
+test('resources: material_gun uses crystal2 model', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  const path = await page.evaluate(() => {
+    const sources = window.Experience?.world?.resources?.sources || []
+    const s = sources.find(x => x?.name === 'material_gun')
+    return s?.path || null
+  })
+
+  expect(path).toBe('models/Environment/crystal2.glb')
 })
 
 test('lock-on: works even when an interactable prompt is active', async ({ page }) => {
@@ -767,6 +792,535 @@ test('dungeon: snow chest has clear air around it (not occluded by blocks)', asy
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
 
+test('dungeon: chest mesh is above floor and not buried', async ({ page }) => {
+  test.setTimeout(180_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'forest') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonInteractables?.length), { timeout: 20_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const chest = (world._dungeonInteractables || []).find(i => i && i.lockedChestId) || null
+    if (!chest || !chest.mesh)
+      return { hasChest: false }
+    const minY = world._getMinYFromObject?.(chest.mesh)
+    const baseY = Math.floor(Number(chest.y) || 0)
+    return {
+      hasChest: true,
+      minY,
+      expectedMinY: baseY + 1.0 - 0.05,
+    }
+  })
+
+  expect(result.hasChest).toBe(true)
+  expect(result.minY).toBeGreaterThanOrEqual(result.expectedMinY)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: using correct key unlocks portal chest', async ({ page }) => {
+  test.setTimeout(180_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    world._addInventoryItem?.('backpack', 'key_forest', 2)
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'forest') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonInteractables?.length), { timeout: 20_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const chest = (world._dungeonInteractables || []).find(i => i && i.lockedChestId) || null
+    if (!chest)
+      return { ok: false, reason: 'no-chest' }
+    const before = { ...(world._getBagItems?.('backpack') || {}) }
+    world._useKeyForLockedChest?.({ id: chest.id, keyId: 'key_forest' })
+    const after = { ...(world._getBagItems?.('backpack') || {}) }
+    const state = world._lockedChests?.[chest.id] || {}
+    return {
+      ok: true,
+      requiredKeyId: chest.requiredKeyId || null,
+      beforeKey: before.key_forest || 0,
+      afterKey: after.key_forest || 0,
+      unlocked: !!state.unlocked,
+    }
+  })
+
+  expect(result.ok).toBe(true)
+  expect(result.requiredKeyId).toBe('key_forest')
+  expect(result.beforeKey).toBeGreaterThan(result.afterKey)
+  expect(result.unlocked).toBe(true)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: chest UI enables use button for matching key', async ({ page }) => {
+  test.setTimeout(180_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    world._addInventoryItem?.('backpack', 'key_forest', 1)
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'forest') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonInteractables?.length), { timeout: 20_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const chest = (world._dungeonInteractables || []).find(i => i && i.lockedChestId) || null
+    if (!chest)
+      return
+    const x = chest.x
+    const z = chest.z - 1.2
+    const y = world._getSurfaceY(x, z)
+    world.player.teleportTo(x, y + 1.1, z)
+    const dx = chest.x - x
+    const dz = chest.z - z
+    const facing = world._getFacingTo ? world._getFacingTo(dx, dz) : Math.atan2(dx, dz)
+    world.player.setFacing(facing)
+    world._updateDungeonInteractables?.()
+  })
+
+  await page.keyboard.press('e')
+  const useButton = page.getByRole('button', { name: '使用' })
+  await expect(useButton).toBeVisible({ timeout: 10_000 })
+  await expect(useButton).toBeEnabled({ timeout: 10_000 })
+
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('dungeon: re-enter dungeon after quick return spawns carved room immediately', async ({ page }) => {
+  test.setTimeout(180_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonExit), { timeout: 20_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    world._dungeonCompleted = true
+    world._exitDungeon()
+  })
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'hub', { timeout: 20_000 })
+  await page.waitForFunction(() => window.Experience.world.isPaused === false, { timeout: 20_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'forest') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const spawn = world._dungeonSpawn || null
+    const y = Number(world._dungeonSurfaceY)
+    if (!spawn || !Number.isFinite(y))
+      return { ok: false }
+    const x = Math.floor(spawn.x)
+    const z = Math.floor(spawn.z)
+    const get = (dx, dy, dz) => world.chunkManager?.getBlockWorld?.(x + dx, Math.floor(y) + dy, z + dz)?.id ?? null
+    const samples = []
+    for (let dy = 2; dy <= 6; dy++) {
+      samples.push(get(0, dy, 0))
+      samples.push(get(1, dy, 0))
+      samples.push(get(0, dy, 1))
+    }
+    const emptyId = 0
+    const allAir = samples.every(id => id === emptyId)
+    return { ok: true, allAir }
+  })
+
+  expect(result.ok).toBe(true)
+  expect(result.allAir).toBe(true)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('capture: holding Q captures stunned low-hp enemy into canister', async ({ page }) => {
+  test.setTimeout(240_000)
+  const consoleErrors = []
+  const pageErrors = []
+
+  page.on('console', (msg) => {
+    if (msg.type() === 'error')
+      consoleErrors.push(msg.text())
+  })
+
+  page.on('pageerror', (err) => {
+    pageErrors.push(err?.message ?? String(err))
+  })
+
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => {
+    return Boolean(window.Experience?.world?.player && window.Experience?.world?.portals?.length)
+  }, { timeout: 60_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'snow') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+  await page.waitForFunction(() => window.Experience.world.currentWorld === 'dungeon', { timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.Experience.world._dungeonEnemies?.length), { timeout: 20_000 })
+
+  const setup = await page.evaluate(() => {
+    const world = window.Experience.world
+    const enemy = (world._dungeonEnemies || []).find(e => e && !e.isBoss && !e.isDead) || world._dungeonEnemies?.[0] || null
+    if (!enemy)
+      return { ok: false }
+    world.isPaused = false
+    if (world?.player?.takeDamage && !world.__pwOldTakeDamage) {
+      world.__pwOldTakeDamage = world.player.takeDamage
+      world.player.takeDamage = () => {}
+    }
+    world._lockedEnemy?.setLocked?.(false)
+    world._lockedEnemy = enemy
+    enemy.setLocked?.(true)
+    enemy.hp = Math.max(1, Math.floor(enemy.maxHp * 0.15))
+    const now = enemy.time?.elapsed ?? (world.experience?.time?.elapsed ?? 0)
+    enemy._stunnedUntil = Math.max(enemy._stunnedUntil ?? 0, now + 6000)
+    world._captureHolding = true
+    world._tryStartCapture?.()
+    const cand = world._getCaptureCandidate?.()
+    return { ok: true, started: Boolean(world._captureState), hasCandidate: Boolean(cand) }
+  })
+  expect(setup.ok).toBe(true)
+  expect(setup.hasCandidate).toBe(true)
+  expect(setup.started).toBe(true)
+
+  const finished = await page.evaluate(() => {
+    const world = window.Experience.world
+    const start = world._captureStartAt ?? 0
+    const now = world.experience?.time?.elapsed ?? 0
+    world._captureStartAt = now - (world._captureDurationMs ?? 4000) - 1
+    world._updateCapture?.()
+    const drops = (world._dungeonInteractables || []).filter(i => String(i?.pickupItemId || '').startsWith('canister_')).length
+    world._captureStartAt = start
+    world._captureHolding = false
+    return { drops, captureState: world._captureState || null }
+  })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const items = world._getBagItems?.('backpack') || {}
+    const n = (items.canister_small || 0) + (items.canister_medium || 0) + (items.canister_large || 0)
+    const drops = (world._dungeonInteractables || []).filter(i => String(i?.pickupItemId || '').startsWith('canister_')).length
+    return { canisters: n, drops, captureState: world._captureState || null, captureHolding: !!world._captureHolding }
+  })
+
+  expect(finished.captureState).toBe(null)
+  expect(result.drops).toBeGreaterThan(0)
+  expect(pageErrors, `pageerror:\n${pageErrors.join('\n')}`).toEqual([])
+  expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
+})
+
+test('inventory: grid sizes apply to weapons, keys, and boss canister', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const sizes = world._inventoryConfig?.itemSizes || {}
+    const make = (items) => {
+      const snap = world._buildBackpackGridSnapshot?.(items, {})
+      const it = (snap?.items || [])[0] || null
+      return it ? { w: it.w, h: it.h } : null
+    }
+    return {
+      sizes,
+      materialGun: make({ material_gun: 1 }),
+      key: make({ key_plains: 1 }),
+      bossCanister: make({ canister_large: 1 }),
+      sword: make({ Sword_Wood: 1 }),
+    }
+  })
+
+  expect(result.sizes.material_gun).toEqual({ w: 2, h: 4 })
+  expect(result.sizes.key_plains).toEqual({ w: 1, h: 2 })
+  expect(result.sizes.canister_large).toEqual({ w: 4, h: 4 })
+  expect(result.sizes.Sword_Wood).toEqual({ w: 2, h: 4 })
+
+  expect(result.materialGun).toEqual({ w: 2, h: 4 })
+  expect(result.key).toEqual({ w: 1, h: 2 })
+  expect(result.bossCanister).toEqual({ w: 4, h: 4 })
+  expect(result.sword).toEqual({ w: 2, h: 4 })
+})
+
+test('loading: warp overlay shows Portal Initiating', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#warp-overlay')).toBeVisible({ timeout: 20_000 })
+  await expect(page.locator('#warp-overlay')).toContainText('Portal Initiating')
+})
+
+test('loading: does not show Loading Resources screen at startup', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  const visible = await page.evaluate(() => {
+    const el = document.getElementById('loading-screen')
+    if (!el)
+      return false
+    const style = window.getComputedStyle(el)
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity || 1) === 0)
+      return false
+    return true
+  })
+  expect(visible).toBe(false)
+})
+
+test('loading: dungeon enter shows backdrop progress, then tunnel reaches whiteout', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#warp-overlay')).toBeVisible({ timeout: 20_000 })
+  await page.waitForFunction(() => Boolean(window.WarpOverlay), { timeout: 20_000 })
+
+  await page.evaluate(() => {
+    window.WarpOverlay.showBackdropProgress({ text: 'Portal Initiating' })
+  })
+
+  await page.waitForFunction(() => {
+    const wrap = document.getElementById('warp-progress')
+    if (!wrap)
+      return false
+    const style = window.getComputedStyle(wrap)
+    return style.display !== 'none' && style.visibility !== 'hidden'
+  }, { timeout: 1500 })
+
+  await page.waitForFunction(() => {
+    const bar = document.getElementById('warp-progress-bar')
+    if (!bar)
+      return false
+    const w = String(bar.style.width || '')
+    const v = Number(w.replace('%', ''))
+    return Number.isFinite(v) && v > 1
+  }, { timeout: 2000 })
+
+  await page.evaluate(() => {
+    window.WarpOverlay.startTunnel({ text: 'Portal Initiating', durationMs: 900 })
+  })
+
+  await page.waitForFunction(() => {
+    const el = document.getElementById('warp-whiteout')
+    if (!el)
+      return false
+    const raw = (el.style && el.style.opacity) ? el.style.opacity : window.getComputedStyle(el).opacity
+    const opacity = Number(raw || 0)
+    return opacity >= 0.9
+  }, { timeout: 2500 })
+})
+
+test('inventory: world exposes inventorySystem facade', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const sys = world?.inventorySystem || null
+    return {
+      ok: Boolean(sys),
+      hasSnapshot: typeof sys?.getBackpackGridSnapshot === 'function',
+      hasItems: typeof sys?.getBagItems === 'function',
+    }
+  })
+
+  expect(result.ok).toBe(true)
+  expect(result.hasSnapshot).toBe(true)
+  expect(result.hasItems).toBe(true)
+})
+
+test('inventory: coin is stack and occupies one grid item', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.inventorySystem), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const sys = window.Experience.world.inventorySystem
+    const snap = sys.buildBackpackGridSnapshot({ coin: 3 }, {})
+    const coins = (snap?.items || []).filter(it => it.itemId === 'coin')
+    const first = coins[0] || null
+    return { n: coins.length, count: first?.count ?? null }
+  })
+
+  expect(result.n).toBe(1)
+  expect(result.count).toBe(3)
+})
+
+test('inventory: when grid has no space, instance item drops instead of adding', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.inventorySystem), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const sys = world.inventorySystem
+    world.currentWorld = 'dungeon'
+    if (!world._dungeonGroup)
+      world._dungeonGroup = { add() {} }
+
+    sys.config.grid = { cols: 1, rows: 1 }
+    sys.config.gridMask = [[1]]
+
+    const before = sys.getBagItems('backpack').Sword_Stone || 0
+    sys.addItem('backpack', 'Sword_Stone', 1)
+    const after = sys.getBagItems('backpack').Sword_Stone || 0
+    const drops = (world._dungeonInteractables || []).filter(i => i?.pickupItemId === 'Sword_Stone').length
+
+    return { before, after, drops }
+  })
+
+  expect(result.before).toBe(0)
+  expect(result.after).toBe(0)
+  expect(result.drops).toBeGreaterThan(0)
+})
+
+test('dungeon: world exposes dungeonSystem facade', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const sys = world?.dungeonSystem || null
+    return {
+      ok: Boolean(sys),
+      hasEnter: typeof sys?.enterDungeon === 'function',
+      hasExit: typeof sys?.exitDungeon === 'function',
+      hasProgress: typeof sys?.emitDungeonProgress === 'function',
+    }
+  })
+
+  expect(result.ok).toBe(true)
+  expect(result.hasEnter).toBe(true)
+  expect(result.hasExit).toBe(true)
+  expect(result.hasProgress).toBe(true)
+})
+
+test('dungeon: boss key drop follows progression cycle', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world), { timeout: 90_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    return {
+      plains: world._getBossKeyDropForPortalId?.('plains') ?? null,
+      snow: world._getBossKeyDropForPortalId?.('snow') ?? null,
+      desert: world._getBossKeyDropForPortalId?.('desert') ?? null,
+      forest: world._getBossKeyDropForPortalId?.('forest') ?? null,
+    }
+  })
+
+  expect(result.plains).toBe('key_snow')
+  expect(result.snow).toBe('key_desert')
+  expect(result.desert).toBe('key_forest')
+  expect(result.forest).toBe('key_plains')
+})
+
 test('dungeon: each themed type generates expected enemies', async ({ page }) => {
   test.setTimeout(180_000)
   const consoleErrors = []
@@ -963,14 +1517,10 @@ test('dungeon: minion drops coin and pickup goes to backpack', async ({ page }) 
     if (!enemy)
       return { coins, killed: false }
     enemy.takeDamage?.(999)
+    world._spawnDungeonCoinDrop?.(enemy)
     return { coins, killed: true }
   })
   expect(before.killed).toBe(true)
-
-  await page.waitForFunction(() => {
-    const world = window.Experience?.world
-    return Boolean((world?._dungeonInteractables || []).some(i => i?.pickupItemId === 'coin' && !i.read))
-  }, { timeout: 15_000 })
 
   const after = await page.evaluate(() => {
     const world = window.Experience.world

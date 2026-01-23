@@ -7,6 +7,7 @@ import PlayerHUD from './components/PlayerHUD.vue'
 import StoryModal from './components/StoryModal.vue'
 import Experience from './js/experience.js'
 import emitter from './js/utils/event-bus.js'
+import warpOverlay from './js/vfx/warp-tunnel/warp-loading-overlay.js'
 
 const threeCanvas = ref(null)
 let experience = null
@@ -24,9 +25,38 @@ const backpackGrid = ref(null)
 const gridState = ref(null)
 const gridDrag = ref(null)
 const gridHover = ref(null)
+const backpackGridPointerEl = ref(null)
+const inventorySelected = ref(null)
+const discardConfirm = ref(null)
 const gridCellPx = 42
+const warehousePage = ref(1)
+const warehousePagesUnlocked = ref(2)
+const warehousePagesTotal = ref(5)
+const warehouseGrid = ref(null)
+const warehouseGridState = ref(null)
 const chestModal = ref(null)
 const portalSelectModal = ref(null)
+const visitedPortals = new Set()
+let lastLoadingPortalId = null
+
+function loadVisitedPortals() {
+  try {
+    const raw = window.localStorage?.getItem?.('mmmc:warp_portal_visited_v1')
+    const arr = raw ? JSON.parse(raw) : []
+    if (Array.isArray(arr))
+      arr.forEach(id => visitedPortals.add(String(id)))
+  }
+  catch {
+  }
+}
+
+function saveVisitedPortals() {
+  try {
+    window.localStorage?.setItem?.('mmmc:warp_portal_visited_v1', JSON.stringify(Array.from(visitedPortals)))
+  }
+  catch {
+  }
+}
 
 function onPortalPrompt(payload) {
   portalPrompt.value = payload
@@ -50,10 +80,34 @@ function onInteractableOpen(payload) {
 
 function onLoadingShow(payload) {
   loadingState.value = payload
+  const kind = payload?.kind || null
+  const portalId = payload?.portalId ? String(payload.portalId) : null
+  lastLoadingPortalId = portalId
+  if (kind === 'dungeon-enter') {
+    warpOverlay.showBackdropProgress({ text: 'Portal Initiating' })
+    return
+  }
+  warpOverlay.show({ text: 'Portal Initiating' })
+  warpOverlay.engageHyperdrive({ durationMs: 6000 })
 }
 
 function onLoadingHide() {
   loadingState.value = null
+  if (lastLoadingPortalId) {
+    visitedPortals.add(lastLoadingPortalId)
+    saveVisitedPortals()
+    lastLoadingPortalId = null
+  }
+  warpOverlay.completeSoon()
+}
+
+function onDungeonMeshReady() {
+  if (!loadingState.value)
+    return
+  if (loadingState.value.kind !== 'dungeon-enter')
+    return
+  warpOverlay.markBackdropReady()
+  warpOverlay.startTunnel({ text: 'Portal Initiating', durationMs: 6000 })
 }
 
 function onDungeonProgress(payload) {
@@ -177,9 +231,28 @@ function onInventoryUpdate(payload) {
   if (payload?.panel)
     inventoryPanel.value = payload.panel
   backpackGrid.value = payload?.backpackGrid || null
+  warehouseGrid.value = payload?.warehouseGrid || null
+  if (payload?.warehousePage)
+    warehousePage.value = Math.max(1, Math.floor(Number(payload.warehousePage) || 1))
+  if (payload?.warehousePagesUnlocked)
+    warehousePagesUnlocked.value = Math.max(1, Math.floor(Number(payload.warehousePagesUnlocked) || 1))
+  if (payload?.warehousePagesTotal)
+    warehousePagesTotal.value = Math.max(1, Math.floor(Number(payload.warehousePagesTotal) || 1))
   if (!gridDrag.value) {
     const rawGrid = backpackGrid.value ? toRaw(backpackGrid.value) : null
     gridState.value = rawGrid ? structuredClone(rawGrid) : null
+  }
+  const rawWh = warehouseGrid.value ? toRaw(warehouseGrid.value) : null
+  warehouseGridState.value = rawWh ? structuredClone(rawWh) : null
+
+  const selected = inventorySelected.value
+  if (selected?.uid) {
+    const g = gridState.value
+    const found = g ? (g.items || []).find(i => i.uid === selected.uid) : null
+    if (!found)
+      inventorySelected.value = null
+    else
+      inventorySelected.value = { uid: found.uid, itemId: found.itemId, count: found.count }
   }
 }
 
@@ -193,6 +266,16 @@ function transferItem(from, to, itemId, amount = 1) {
   if (!from || !to || !itemId)
     return
   emitter.emit('inventory:transfer', { from, to, itemId, amount })
+}
+
+function setWarehousePage(nextPage) {
+  const page = Math.max(1, Math.floor(Number(nextPage) || 1))
+  if (page > warehousePagesUnlocked.value)
+    return
+  if (warehousePage.value === page)
+    return
+  warehousePage.value = page
+  emitter.emit('inventory:warehouse_page', { page })
 }
 
 function equipItem(itemId) {
@@ -236,6 +319,20 @@ function itemLabel(id) {
   if (String(id).startsWith('Axe_') || String(id).startsWith('Pickaxe_') || String(id).startsWith('Shovel_') || String(id).startsWith('Sword_'))
     return `${id}.gltf`
   return id
+}
+
+function itemDescription(id) {
+  if (id === 'coin')
+    return '货币。用于解锁仓库页与后续升级。'
+  if (String(id).startsWith('key_'))
+    return '钥匙。用于解锁对应地牢的上锁宝箱。'
+  if (String(id).startsWith('canister_'))
+    return '收容罐。捕捉成功后的实体战利品，占用网格并带来负重压力。'
+  if (id === 'material_gun')
+    return '物质枪。锁定目标后可发射光束造成持续伤害，并触发仇恨追击。'
+  if (id === 'crystal_big' || id === 'crystal_small')
+    return '矿物。用于后续制作与升级。'
+  return '道具。'
 }
 
 function isKeyItem(id) {
@@ -304,12 +401,33 @@ function gridCanFit(uid, x, y, w, h) {
     return false
   for (let yy = y; yy < y + h; yy++) {
     for (let xx = x; xx < x + w; xx++) {
+      if (grid.mask?.[yy]?.[xx] === 0)
+        return false
       const v = grid.cells?.[yy]?.[xx] ?? null
       if (v && v !== uid)
         return false
     }
   }
   return true
+}
+
+function gridCellActive(index) {
+  const grid = gridState.value
+  if (!grid)
+    return false
+  const i = Number(index)
+  const x = (i - 1) % grid.cols
+  const y = Math.floor((i - 1) / grid.cols)
+  return grid.mask?.[y]?.[x] !== 0
+}
+
+function gridCellActiveBy(grid, index) {
+  if (!grid)
+    return false
+  const i = Number(index)
+  const x = (i - 1) % grid.cols
+  const y = Math.floor((i - 1) / grid.cols)
+  return grid.mask?.[y]?.[x] !== 0
 }
 
 function gridPointerToCell(event) {
@@ -322,12 +440,50 @@ function gridPointerToCell(event) {
   return { x, y }
 }
 
+function selectGridItem(uid) {
+  const item = gridFindItem(uid)
+  if (!item)
+    return
+  inventorySelected.value = { uid: item.uid, itemId: item.itemId, count: item.count }
+}
+
+function openDiscardConfirmByUid(uid) {
+  const item = gridFindItem(uid)
+  if (!item)
+    return
+  const isStack = item.itemId === 'coin' || String(item.itemId).startsWith('key_')
+  const amount = Math.max(1, Math.min(isStack ? 1 : 1, Math.floor(Number(item.count) || 1)))
+  discardConfirm.value = { uid: item.uid, itemId: item.itemId, count: item.count, amount }
+}
+
+function confirmDiscard() {
+  const payload = discardConfirm.value
+  if (!payload?.uid || !payload?.itemId)
+    return
+  emitter.emit('inventory:drop', { uid: payload.uid, amount: payload.amount })
+  if (inventorySelected.value?.uid === payload.uid)
+    inventorySelected.value = null
+  discardConfirm.value = null
+}
+
+function cancelDiscard() {
+  discardConfirm.value = null
+}
+
+function requestDropSelected() {
+  const selected = inventorySelected.value
+  if (!selected?.uid)
+    return
+  openDiscardConfirmByUid(selected.uid)
+}
+
 function onGridItemPointerDown(event, uid) {
   if (!gridState.value)
     return
   const item = gridFindItem(uid)
   if (!item)
     return
+  selectGridItem(uid)
   gridDrag.value = {
     uid,
     startX: item.x,
@@ -337,6 +493,8 @@ function onGridItemPointerDown(event, uid) {
     rotated: !!item.rotated,
   }
   gridHover.value = null
+  if (event.pointerId !== undefined)
+    backpackGridPointerEl.value?.setPointerCapture?.(event.pointerId)
   event.stopPropagation()
   event.preventDefault()
 }
@@ -359,7 +517,8 @@ function onGridPointerUp(event) {
   if (!drag || !grid)
     return
   const cell = gridPointerToCell(event)
-  if (cell && gridCanFit(drag.uid, cell.x, cell.y, drag.w, drag.h)) {
+  const isOutside = !cell || cell.x < 0 || cell.y < 0 || cell.x >= grid.cols || cell.y >= grid.rows
+  if (!isOutside && gridCanFit(drag.uid, cell.x, cell.y, drag.w, drag.h)) {
     const item = gridFindItem(drag.uid)
     if (item) {
       item.x = cell.x
@@ -368,7 +527,11 @@ function onGridPointerUp(event) {
       item.h = drag.h
       item.rotated = drag.rotated
       gridRecomputeCells(grid)
+      emitter.emit('inventory:grid_place', { uid: item.uid, x: item.x, y: item.y, rotated: !!item.rotated })
     }
+  }
+  else if (isOutside) {
+    openDiscardConfirmByUid(drag.uid)
   }
   gridDrag.value = null
   gridHover.value = null
@@ -385,12 +548,26 @@ function rotateDraggedGridItem() {
   drag.rotated = !drag.rotated
 }
 
+function gridIconKind(id) {
+  const key = String(id || '')
+  if (key === 'coin')
+    return 'coin'
+  if (key === 'material_gun')
+    return 'gun'
+  if (key.startsWith('key_'))
+    return 'key'
+  if (key.startsWith('canister_'))
+    return 'canister'
+  return null
+}
+
 onMounted(() => {
   if (!threeCanvas.value) {
     console.error('Three.js canvas not found!')
     return
   }
 
+  loadVisitedPortals()
   experience = new Experience(threeCanvas.value)
   emitter.on('portal:prompt', onPortalPrompt)
   emitter.on('portal:prompt_clear', onPortalPromptClear)
@@ -399,6 +576,7 @@ onMounted(() => {
   emitter.on('interactable:open', onInteractableOpen)
   emitter.on('loading:show', onLoadingShow)
   emitter.on('loading:hide', onLoadingHide)
+  emitter.on('loading:dungeon_mesh_ready', onDungeonMeshReady)
   emitter.on('dungeon:progress', onDungeonProgress)
   emitter.on('dungeon:progress_clear', onDungeonProgressClear)
   emitter.on('dungeon:toast', onDungeonToast)
@@ -423,6 +601,7 @@ onBeforeUnmount(() => {
   emitter.off('interactable:open', onInteractableOpen)
   emitter.off('loading:show', onLoadingShow)
   emitter.off('loading:hide', onLoadingHide)
+  emitter.off('loading:dungeon_mesh_ready', onDungeonMeshReady)
   emitter.off('dungeon:progress', onDungeonProgress)
   emitter.off('dungeon:progress_clear', onDungeonProgressClear)
   emitter.off('dungeon:toast', onDungeonToast)
@@ -706,7 +885,39 @@ onBeforeUnmount(() => {
       class="absolute inset-0 z-[11000] flex items-center justify-center bg-black/50 px-4 backdrop-blur-sm"
       @click.self="closeInventoryPanel"
     >
-      <div class="w-full max-w-[860px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+      <div class="relative w-full max-w-[860px] rounded-2xl border border-white/20 bg-white/15 p-5 text-white shadow-2xl backdrop-blur-md">
+        <div
+          v-if="discardConfirm"
+          class="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-black/60 px-4 backdrop-blur-sm"
+          @click.self="cancelDiscard"
+        >
+          <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-4 shadow-2xl backdrop-blur-md">
+            <div class="text-sm font-bold text-white/90">
+              丢弃道具？
+            </div>
+            <div class="mt-2 text-sm opacity-90">
+              {{ itemLabel(discardConfirm.itemId) }} x{{ discardConfirm.amount }}
+            </div>
+            <div class="mt-3 text-xs opacity-75">
+              丢弃后会掉落在地面，可再次拾取。
+            </div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+              <button
+                class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+                @click="cancelDiscard"
+              >
+                取消
+              </button>
+              <button
+                class="rounded-lg border border-rose-300/30 bg-rose-500/20 px-3 py-1.5 text-sm font-semibold text-white hover:bg-rose-500/25"
+                @click="confirmDiscard"
+              >
+                丢弃
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="flex items-start justify-between gap-4">
           <div class="text-lg font-semibold drop-shadow">
             {{ inventoryPanel === 'warehouse' ? '仓库' : '背包' }}
@@ -735,6 +946,7 @@ onBeforeUnmount(() => {
                 :style="{ width: `${gridState.cols * gridCellPx + 24}px` }"
               >
                 <div
+                  ref="backpackGridPointerEl"
                   class="relative"
                   :style="{ width: `${gridState.cols * gridCellPx}px`, height: `${gridState.rows * gridCellPx}px` }"
                   @pointermove="onGridPointerMove"
@@ -751,7 +963,8 @@ onBeforeUnmount(() => {
                     <div
                       v-for="i in (gridState.cols * gridState.rows)"
                       :key="`cell:${i}`"
-                      class="rounded-md border border-white/5 bg-white/5"
+                      class="rounded-md border"
+                      :class="gridCellActive(i) ? 'border-white/5 bg-white/5' : 'border-transparent bg-transparent'"
                     />
                   </div>
 
@@ -780,46 +993,94 @@ onBeforeUnmount(() => {
                     }"
                     @pointerdown="(e) => onGridItemPointerDown(e, it.uid)"
                   >
-                    <span class="truncate">
-                      {{ it.itemId }}
-                    </span>
+                    <div class="relative flex w-full items-center gap-2 overflow-hidden">
+                      <div
+                        v-if="Number(it.count) > 1"
+                        class="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white/90"
+                      >
+                        x{{ it.count }}
+                      </div>
+                      <svg
+                        v-if="gridIconKind(it.itemId) === 'coin'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
+                        <path d="M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'key'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M10 14a4 4 0 1 1 1.17-2.83L20 11v3h-2v2h-2v2h-3v-2.2l-1.83-.12A4 4 0 0 1 10 14Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'canister'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                        <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'gun'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M4 14h10l2-4h4v4h-2v2h-6v-2H4v-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <span class="min-w-0 truncate">
+                        {{ itemLabel(it.itemId) }}
+                      </span>
+                    </div>
                   </button>
                 </div>
               </div>
 
-              <div v-if="bagEntries(inventoryData.backpack).length === 0" class="text-sm opacity-80">
-                空
-              </div>
-              <div v-else class="space-y-2">
-                <div
-                  v-for="row in bagEntries(inventoryData.backpack)"
-                  :key="`bp:${row.id}`"
-                  class="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
-                >
-                  <div class="min-w-0">
-                    <div class="truncate text-sm font-semibold">
-                      {{ itemLabel(row.id) }}
-                    </div>
-                    <div class="text-xs opacity-80">
-                      x{{ row.count }}
-                    </div>
+              <div class="rounded-xl border border-white/10 bg-white/5 px-3 py-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-sm font-bold text-white/90">
+                    说明
                   </div>
-                  <div class="flex shrink-0 items-center gap-2">
+                  <div class="flex items-center gap-2">
                     <button
-                      v-if="row.id === 'material_gun'"
+                      v-if="inventorySelected?.itemId === 'material_gun'"
                       class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
-                      @click="equipItem(row.id)"
+                      @click="equipItem('material_gun')"
                     >
                       装备/收起
                     </button>
                     <button
-                      v-if="inventoryPanel === 'warehouse'"
+                      v-if="inventoryPanel === 'warehouse' && inventorySelected?.itemId"
                       class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
-                      @click="transferItem('backpack', 'warehouse', row.id, 1)"
+                      @click="transferItem('backpack', 'warehouse', inventorySelected.itemId, 1)"
                     >
                       存入
                     </button>
+                    <button
+                      :disabled="!inventorySelected?.uid"
+                      class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15 disabled:opacity-40"
+                      @click="requestDropSelected"
+                    >
+                      丢弃
+                    </button>
                   </div>
+                </div>
+                <div v-if="inventorySelected?.itemId" class="mt-2">
+                  <div class="text-sm font-semibold">
+                    {{ itemLabel(inventorySelected.itemId) }} <span class="text-xs opacity-80">x{{ Math.max(1, Math.floor(Number(inventorySelected.count) || 1)) }}</span>
+                  </div>
+                  <div class="mt-1 text-xs opacity-80">
+                    {{ itemDescription(inventorySelected.itemId) }}
+                  </div>
+                </div>
+                <div v-else class="mt-2 text-sm opacity-80">
+                  点击选中一个道具以查看说明
                 </div>
               </div>
             </div>
@@ -861,9 +1122,110 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="inventoryPanel === 'warehouse'" class="rounded-2xl border border-white/15 bg-black/30 p-4">
-            <div class="mb-3 flex items-center justify-between">
+            <div class="mb-2 flex items-center justify-between gap-3">
               <div class="text-sm font-bold text-white/90">
-                仓库
+                仓库 · 第 {{ warehousePage }} 页
+              </div>
+              <div class="flex items-center gap-1">
+                <button
+                  v-for="p in warehousePagesTotal"
+                  :key="`whp:${p}`"
+                  class="rounded-lg border px-2 py-1 text-[11px] font-bold"
+                  :class="p === warehousePage ? 'border-white/30 bg-white/15' : (p <= warehousePagesUnlocked ? 'border-white/15 bg-white/10 hover:bg-white/15' : 'border-white/10 bg-white/5 opacity-60')"
+                  :disabled="p > warehousePagesUnlocked"
+                  @click="setWarehousePage(p)"
+                >
+                  <span v-if="p <= warehousePagesUnlocked">{{ p }}</span>
+                  <span v-else>锁 {{ p }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="mb-3 text-xs opacity-70">
+              默认解锁 1-{{ warehousePagesUnlocked }} 页；第 3-5 页锁定，后续可继续解锁
+            </div>
+
+            <div v-if="warehouseGridState" class="mb-4">
+              <div
+                class="relative rounded-xl border border-white/10 bg-black/35 p-3"
+                :style="{ width: `${warehouseGridState.cols * gridCellPx + 24}px` }"
+              >
+                <div
+                  class="relative"
+                  :style="{ width: `${warehouseGridState.cols * gridCellPx}px`, height: `${warehouseGridState.rows * gridCellPx}px` }"
+                >
+                  <div
+                    class="absolute inset-0 grid gap-[2px]"
+                    :style="{
+                      gridTemplateColumns: `repeat(${warehouseGridState.cols}, ${gridCellPx - 2}px)`,
+                      gridTemplateRows: `repeat(${warehouseGridState.rows}, ${gridCellPx - 2}px)`,
+                    }"
+                  >
+                    <div
+                      v-for="i in (warehouseGridState.cols * warehouseGridState.rows)"
+                      :key="`whcell:${i}`"
+                      class="rounded-md border"
+                      :class="gridCellActiveBy(warehouseGridState, i) ? 'border-white/5 bg-white/5' : 'border-transparent bg-transparent'"
+                    />
+                  </div>
+
+                  <div
+                    v-for="it in (warehouseGridState.items || [])"
+                    :key="`whgi:${it.uid}`"
+                    class="pointer-events-none absolute flex items-center justify-center rounded-lg border border-white/10 bg-white/5 px-2 text-center text-[11px] font-semibold text-white/90"
+                    :style="{
+                      left: `${it.x * gridCellPx}px`,
+                      top: `${it.y * gridCellPx}px`,
+                      width: `${it.w * gridCellPx}px`,
+                      height: `${it.h * gridCellPx}px`,
+                    }"
+                  >
+                    <div class="relative flex w-full items-center gap-2 overflow-hidden">
+                      <div
+                        v-if="Number(it.count) > 1"
+                        class="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white/90"
+                      >
+                        x{{ it.count }}
+                      </div>
+                      <svg
+                        v-if="gridIconKind(it.itemId) === 'coin'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
+                        <path d="M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'key'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M10 14a4 4 0 1 1 1.17-2.83L20 11v3h-2v2h-2v2h-3v-2.2l-1.83-.12A4 4 0 0 1 10 14Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'canister'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                        <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'gun'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M4 14h10l2-4h4v4h-2v2h-6v-2H4v-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <span class="min-w-0 truncate">
+                        {{ itemLabel(it.itemId) }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             <div v-if="bagEntries(inventoryData.warehouse).length === 0" class="text-sm opacity-80">
@@ -892,20 +1254,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    </div>
-
-    <div
-      v-if="loadingState"
-      class="pointer-events-none absolute inset-0 z-[12000] flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
-    >
-      <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-5 text-center text-white shadow-2xl backdrop-blur-md">
-        <div class="text-lg font-semibold drop-shadow">
-          {{ loadingState.title }}
-        </div>
-        <div class="mx-auto mt-4 h-1.5 w-56 overflow-hidden rounded-full bg-white/15">
-          <div class="h-full w-1/2 animate-pulse rounded-full bg-white/70" />
         </div>
       </div>
     </div>

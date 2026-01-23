@@ -524,8 +524,9 @@ export default class HumanoidEnemy {
       return true
     }
 
-    const ratio = this.maxHp > 0 ? (this.hp / this.maxHp) : 0
-    if (ratio > 0 && ratio <= 0.15) {
+    const maxHp = Math.max(1, Math.floor(Number(this.maxHp) || 1))
+    const threshold = Math.max(1, Math.ceil(maxHp * 0.15))
+    if (this.hp > 0 && this.hp <= threshold) {
       this._stunnedUntil = Math.max(this._stunnedUntil, now + 1200)
     }
 

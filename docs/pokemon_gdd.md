@@ -19,17 +19,19 @@
 已实现并回归通过（Playwright 覆盖）：
 
 - Hub 流程可跑通；B 打开背包；靠近仓库按 E 打开仓库
+- 背包 UI：拖拽道具到网格外会弹出“丢弃/取消”；也可在说明区点击“丢弃”（丢弃后掉落在地，可再次拾取）
 - 物质枪：背包内可装备/收起；挂载到主控；射线起点来自枪口（muzzle）
 - 锁定：中键锁定/解除（Hub 动物与 Dungeon 敌人）；锁定时主控朝向会平滑对齐目标
 - 物质枪 DoT：锁定且开火时持续扣血；命中后目标进入仇恨追击并可近战攻击
 - 地牢：固定 4 个战斗房间（fight1-4）；总敌人 4 杂兵 + 1 Boss；杂兵击败会掉落金币并可拾取入背包
 - 地牢出口：出口点有明显可视标记，并做了清障，避免被墙体挡住
+- 左下角日志 HUD：显示战斗伤害、拾取/丢弃、捕捉成功/失败、传送进入/离开等关键进度日志（默认高透明，悬停才变清晰）
 
 未实装或未形成闭环（需要后续切片）：
 
-- 捕捉闭环：Q 引导捕捉 → 生成 Canister → 背负/入仓库/结算
-- 网格背包（Tetris Inventory）：占格/旋转/腾挪与持久化
-- 负重视觉化：Canister 挂载与高亮、冲刺禁用等完整表达
+- 撤离结算：捕捉后“撤离结算（回到 Hub 的结算节点）”尚未形成独立闭环
+- 网格背包（Tetris Inventory）：基础网格/拖拽/旋转/持久化已做，但占格规则需要扩展到更多道具（不再是全 1 格）
+- 负重视觉化：已有背部挂载与基础惩罚，但缺少 Boss 罐的超大占格与更明确的高亮表达
 - “参考图 1-5 号类”的房间配置：需要以图中编号规则作为房间/事件的生成口径
 
 ## 1. 本迭代目标
@@ -130,6 +132,14 @@
 - 被锁定目标：头顶显示血条（仅在锁定时显示）
 - 锁定状态：屏幕暗角（vignette），用于强化“已锁定”的状态识别
 
+当前实现（对照）：
+
+- 中键锁定/解除：已实装；并且不再因拾取/交互提示而失效
+- 脚底红色圆环：已实装（锁定时显示）
+- 头顶血条：已实装（锁定时显示）
+- 镜头与转向：已实装（相机与主控朝向会对齐锁定目标）
+- Vignette / 锁定准星圆圈收缩 / 红色高亮：未统一落地（可作为下一轮增强项）
+
 镜头与转向（锁定模式）：
 
 - 锁定时，相机 Rig 朝向敌人，并将注视点设置为“玩家与敌人中点 + 目标高度偏移”
@@ -170,6 +180,116 @@
 
 - 鸡：最低 `maxHp` 与 `attackDamage`
 - 狼：最高 `maxHp` 与 `attackDamage`
+
+### 3.3 数值管理列（NPC/minion/boss/道具/消耗品 + Icon 口径）
+
+本节的目标是把“需要做成可配置表”的列先对齐，避免后续边做边补字段导致反复改 UI/存档/生成逻辑。这里不填具体数值，只定义列。
+
+图标像素建议的前提：
+
+- 当前背包/仓库网格单元在 UI 上按 `42px` 渲染（会缩放）
+- 建议准备“按格子数倍增”的正方形/长方形透明底图，保证缩放后依然清晰
+- 默认建议：每 1 格使用 64px（即 1×1 → 64×64）；更大的物品按格子倍数等比放大
+
+| 类型 | 主键/标识列 | 数值管理列（建议最小集） | 捕捉/产出列（如适用） | 背包格子（w×h） | Icon_img | Icon_px 建议 |
+| --- | --- | --- | --- | --- | --- | --- |
+| NPC（可捕捉） | `npcId` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_small`） | 捕捉产物：2×2 | `img/icons/canister_small.png` | 128×128 |
+| Minion（可捕捉） | `enemyId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_medium`） | 捕捉产物：2×2 | `img/icons/canister_medium.png` | 128×128 |
+| Boss（可捕捉） | `bossId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`, `phase`（可选） | `captureCanisterId`（默认 `canister_large`） | 捕捉产物：4×4 | `img/icons/canister_large.png` | 256×256 |
+| 其他道具（Item） | `itemId` / `resourceKey` | `type`, `stackable`, `maxStack`（可选）, `weight`, `rarity`（可选） | `dropRate` / `lootTableId`（可选） | 例：`material_gun` 2×4 | `img/icons/{itemId}.png` | 2×4 → 128×256；1×1 → 64×64；1×2 → 64×128 |
+| 消耗品（Consumable） | `itemId` / `resourceKey` | `stackable`, `maxStack`, `cooldownMs`（可选）, `useEffectId` / `effectValue` | `useConsumes`（是否消耗） | 建议 1×1 或 1×2 | `img/icons/{itemId}.png` | 1×1 → 64×64；1×2 → 64×128 |
+
+如果你后续给我一批 icon，我会按这张表的 `Icon_img` 路径约定把它们接进背包/仓库网格渲染，并把现有 SVG 占位替换为图片。
+
+#### 3.3.1 可捕捉目标清单（当前实现穷举）
+
+说明：当前实现里，捕捉产出是“按目标类别分档”的收容罐（Small/Medium/Large），并不区分“抓到哪一种怪就产出哪一种罐”。因此你需要准备 PNG 的重点是 `canister_*`（见 3.3.2），而不是每个 NPC/敌人各自一张“掉落物图标”。
+
+Hub（NPC/动物，`resourceKey`）：
+
+| 类别 | resourceKey | 现有显示名（代码内 label） | 捕捉产出 itemId |
+| --- | --- | --- | --- |
+| NPC（动物） | `animal_pig` | `矿工鼠` | `canister_small` |
+| NPC（动物） | `animal_sheep` | `绵绵球` | `canister_small` |
+| NPC（动物） | `animal_chicken` | `小鸡` | `canister_small` |
+| NPC（动物） | `animal_cat` | `猫猫` | `canister_small` |
+| NPC（动物） | `animal_wolf` | `狼` | `canister_small` |
+| NPC（动物） | `animal_horse` | `马` | `canister_small` |
+| NPC（动物） | `animal_dog` | `狗狗` | `canister_small` |
+
+Dungeon（minion/boss 的生成池，`type` → `resourceKey=enemy_{type}`）：
+
+| dungeonType | stage | adds（minion type 列表） | boss type（stage=4） |
+| --- | ---: | --- | --- |
+| plains | 1 | `tribal` |  |
+| plains | 2 | `orc` |  |
+| plains | 3 | `tribal`, `orc` |  |
+| plains | 4 |  | `giant` |
+| snow | 1 | `yeti` |  |
+| snow | 2 | `yeti` |  |
+| snow | 3 | `yeti2` |  |
+| snow | 4 |  | `yeti2` |
+| desert | 1 | `cactoro` |  |
+| desert | 2 | `dino` |  |
+| desert | 3 | `cactoro`, `dino` |  |
+| desert | 4 |  | `dino` |
+| forest | 1 | `frog` |  |
+| forest | 2 | `monkroose` |  |
+| forest | 3 | `ninja`, `monkroose` |  |
+| forest | 4 |  | `mushroomking` |
+| mine | 1 | `skeleton` |  |
+| mine | 2 | `orc_skull` |  |
+| mine | 3 | `skeleton_armor` |  |
+| mine | 4 |  | `skeleton_armor` |
+
+Dungeon 捕捉产出规则（当前实现）：
+
+- Hub：捕捉任意目标 → `canister_small`
+- Dungeon：捕捉 minion → `canister_medium`；捕捉 boss（`isBoss=true`）→ `canister_large`
+
+补充：项目里已加载但当前未加入地牢生成池的敌人模型 `resourceKey`（后续可再决定是否进池）：
+
+- `enemy_demon`
+- `enemy_goblin`
+- `enemy_hedgehog`
+- `enemy_wizard`
+- `enemy_zombie`
+
+#### 3.3.2 背包/仓库 itemId 清单（当前实现穷举，按此准备 PNG）
+
+说明：当前 UI 的背包/仓库格子图标路径统一按 `img/icons/{itemId}.png` 约定。
+
+| itemId | 类别 | 堆叠规则 | 背包格子（w×h） | Icon_img | Icon_px 建议 |
+| --- | --- | --- | --- | --- | --- |
+| `coin` | 货币 | Stack | 1×1 | `img/icons/coin.png` | 64×64 |
+| `stone` | 材料 | Instance | 1×1 | `img/icons/stone.png` | 64×64 |
+| `fence` | 任务奖励/材料 | Instance | 1×1 | `img/icons/fence.png` | 64×64 |
+| `crystal_small` | 地牢矿物 | Instance | 1×1 | `img/icons/crystal_small.png` | 64×64 |
+| `crystal_big` | 地牢矿物 | Instance | 1×1 | `img/icons/crystal_big.png` | 64×64 |
+| `material_gun` | 武器（主手） | Instance | 2×4 | `img/icons/material_gun.png` | 128×256 |
+| `key_plains` | 钥匙 | Stack | 1×2 | `img/icons/key_plains.png` | 64×128 |
+| `key_snow` | 钥匙 | Stack | 1×2 | `img/icons/key_snow.png` | 64×128 |
+| `key_desert` | 钥匙 | Stack | 1×2 | `img/icons/key_desert.png` | 64×128 |
+| `key_forest` | 钥匙 | Stack | 1×2 | `img/icons/key_forest.png` | 64×128 |
+| `canister_small` | 灵兽罐（小） | Instance | 2×2 | `img/icons/canister_small.png` | 128×128 |
+| `canister_medium` | 灵兽罐（中） | Instance | 2×2 | `img/icons/canister_medium.png` | 128×128 |
+| `canister_large` | 灵兽罐（大/Boss） | Instance | 4×4 | `img/icons/canister_large.png` | 256×256 |
+| `Axe_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Wood.png` | 128×256 |
+| `Axe_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Stone.png` | 128×256 |
+| `Axe_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Gold.png` | 128×256 |
+| `Axe_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Diamond.png` | 128×256 |
+| `Pickaxe_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Wood.png` | 128×256 |
+| `Pickaxe_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Stone.png` | 128×256 |
+| `Pickaxe_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Gold.png` | 128×256 |
+| `Pickaxe_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Diamond.png` | 128×256 |
+| `Shovel_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Wood.png` | 128×256 |
+| `Shovel_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Stone.png` | 128×256 |
+| `Shovel_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Gold.png` | 128×256 |
+| `Shovel_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Diamond.png` | 128×256 |
+| `Sword_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Wood.png` | 128×256 |
+| `Sword_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Stone.png` | 128×256 |
+| `Sword_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Gold.png` | 128×256 |
+| `Sword_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Diamond.png` | 128×256 |
 
 ## 4. 事件与状态
 
@@ -228,6 +348,13 @@
 
 捕捉是一个高风险的引导（Channeling）过程，核心变量与状态机如下。
 
+当前实现（对照，便于验收与联调）：
+
+- 捕捉范围：Hub 的 NPC、Dungeon 的 minion、Boss 都可捕捉
+- 收容罐分档：NPC → `canister_small`；minion → `canister_medium`；boss → `canister_large`
+- 产出位置：Hub 与 Dungeon 捕捉成功后都会在地面生成可拾取的收容罐（Canister）掉落
+- 清理规则：Hub 中收容罐被拾取后，被捕捉目标会从场景中移除（避免残留导致后续锁定/交互错乱）
+
 #### 前置条件（Check）
 
 - 目标血量阈值：`TargetHP / TargetMaxHP < 15%`
@@ -258,14 +385,26 @@
 
 | CanisterSize | 来源 | 背包占用（Grid） | 负重惩罚            | 视觉挂载（Visuals） |
 | ------------ | ---- | ---------------: | ------------------- | ------------------- |
-| Small        | 杂兵 |              1x1 | 无                  | 腰带后方            |
-| Medium       | 精英 |              1x2 | 移速 -10%           | 背包侧面挂载        |
-| Large        | Boss |        2x2 / 3x3 | 移速 -25%（禁冲刺） | 背部高亮挂载        |
+| Small        | 杂兵 |              2x2 | 无                  | 腰带后方            |
+| Medium       | 精英 |              2x2 | 移速 -10%           | 背包侧面挂载        |
+| Large        | Boss |              4x4 | 移速 -25%（禁冲刺） | 背部高亮挂载        |
 
 本节实现依赖项（当前缺失）：
 
 - 可触发的捕捉产出：地牢内生成 Canister，并能进入背包/仓库
 - 背包“占格”模型：否则无法对齐 Small/Medium/Large 的格子语义
+
+当前实现（对照）：
+
+- 捕捉产出：已实装（捕捉成功后在地面生成可拾取的收容罐战利品；拾取时若背包放不下会提示并保持掉落）
+- 负重惩罚：已实装（中/大收容罐会影响移速与冲刺）
+- 3D 视觉挂载：已实装（方案 A：背部挂载并堆叠显示；当前外观使用 Crystal 模型资源占位）
+- 背包占格：已实装（8x6 网格、支持拖拽与旋转，可配置物品尺寸）
+
+下一轮需要补齐的“闭环”差异（你现在感知到的缺失点主要在这里）：
+
+- Canister 目前只区分 Small/Medium/Large 三个道具 ID，没有进一步细分“Boss 专属罐”的外观层差异（可后置）
+- 捕捉过程缺少进度 UI（读条/取消提示），失败原因也没有可视化（当前仅提供条件满足时的提示语）
 
 #### 视觉策略（不做结论，列候选实现口径）
 
@@ -313,10 +452,57 @@
   - 红色：`CanFit()` 为 false（越界或重叠）
 - Rotate：拖拽时按 `R` 交换宽高（并影响 `CanFit()`）
 
+当前实现（对照）：
+
+- 网格渲染：已实装（B 打开背包后显示 8x6 网格）
+- 拖拽与旋转：已实装（拖拽摆放；拖拽中按 R 旋转）
+- Ghost Preview：已实装（绿色/红色可放置提示）
+- 不规则形状：已实装（网格边角不可用格）
+- 物品 SVG/图标：已实装（金币/钥匙/收容罐/物质枪）
+- 布局持久化：已实装（摆放位置会随存档保存与加载）
+
 #### 约束（需你确认）
 
 - 物品是否区分“堆叠数量”（例如 1x1 的材料可叠加）与“不可叠加的实体”（例如 Canister）
 - 背包与仓库是否都改为网格，还是仅背包网格、仓库保持列表
+
+### 9.3 先把占格做成“可调的规则”，再谈具体数值（你给的尺寸方案在这里落地）
+
+本节的目标是：让占格不再是“每个道具都 1 格”，而是由一个可扩展的规格表驱动。实现时不需要改 UI 交互（拖拽/旋转/预览/持久化沿用现有），只需要让 World 的 `itemSizes` 覆盖更多道具。
+
+#### 9.3.1 物品分两类：堆叠（Stack）与实例（Instance）
+
+- 堆叠（Stack）：数量叠加，默认在列表区显示 `xN`，网格里只放 1 个“代表格”
+  - 例：金币、材料、钥匙（如果你愿意也可以把钥匙做成 Instance）
+- 实例（Instance）：每一个都是独立实体，需要占格、能旋转、能丢弃、能作为掉落物
+  - 例：物质枪、收容罐、宝箱掉落的剑/镐/斧
+
+推荐：钥匙先做 Stack（体验更顺），等你确认要“钥匙也占空间压力”再切 Instance。
+
+#### 9.3.2 推荐占格（你的想法泛化后的第一版）
+
+背包基准：`8x6`（带不规则 Mask），允许旋转。
+
+| 类别            | 示例 itemId                                    | 建议占格 (w×h) | 是否允许旋转 | 备注                                                              |
+| --------------- | ---------------------------------------------- | -------------: | :----------: | ----------------------------------------------------------------- |
+| 货币            | `coin`                                         |            1×1 |      否      | Stack，网格里只放 1 个代表格                                      |
+| 钥匙            | `key_plains` 等                                |            1×2 |      是      | 若保持 Stack，则网格代表格 1×2；若改 Instance，则每把钥匙单独占格 |
+| 武器（主手）    | `material_gun`                                 |            2×4 |      是      | 你的设想：视觉上更像“长物件”                                      |
+| 工具/武器掉落   | `Sword_*` / `Axe_*` / `Pickaxe_*` / `Shovel_*` |            2×4 |      是      | 第一版统一 2×4，后续再区分长短                                    |
+| 灵兽罐（常规）  | `canister_small` / `canister_medium`           |            2×2 |      是      | 把“抓到一只怪”的空间压力做得更明显                                |
+| Boss 罐（超大） | `canister_large`（或新增 `canister_boss`）     |            4×4 |      否      | 推荐不允许旋转（减少“摆法花活”带来的学习成本）                    |
+
+你后续如果要增加“稀有武器更长/更大”的表达，只需要在这张表里改一行，不需要改 UI。
+
+#### 9.3.3 背包满了怎么办：让规则决定结果
+
+当拾取/捕捉产出一个物品时：
+
+- 若是 Stack：按堆叠规则进入背包（不占新增格，或只占代表格）
+- 若是 Instance：必须能在网格里找到可放置位置（允许旋转）才进入背包
+- 放不下：掉落在地（或自动入仓库，取决于你想要“搜打撤压力”还是“便捷”）
+
+推荐：地牢内优先掉落在地；Hub 内可配置为自动入仓库（降低挫败感）。
 
 ## 10. 迭代版本计划（vNext）
 
