@@ -139,7 +139,12 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     const world = window.Experience.world
     if (world && !world.__pwOldFindGrabCandidateAnimal) {
       world.__pwOldFindGrabCandidateAnimal = world._findGrabCandidateAnimal
-      world._findGrabCandidateAnimal = () => world.animals?.[0] ?? null
+      world.__pwOldFindGrabCandidateAnimalSystem = world.hubNpcSystem?.findGrabCandidateAnimal
+
+      const pickFirstAnimal = () => world.animals?.[0] ?? null
+      world._findGrabCandidateAnimal = pickFirstAnimal
+      if (world.hubNpcSystem)
+        world.hubNpcSystem.findGrabCandidateAnimal = pickFirstAnimal
     }
   })
 
@@ -151,6 +156,11 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
     if (world?.__pwOldFindGrabCandidateAnimal) {
       world._findGrabCandidateAnimal = world.__pwOldFindGrabCandidateAnimal
       delete world.__pwOldFindGrabCandidateAnimal
+    }
+    if (world?.__pwOldFindGrabCandidateAnimalSystem) {
+      if (world.hubNpcSystem)
+        world.hubNpcSystem.findGrabCandidateAnimal = world.__pwOldFindGrabCandidateAnimalSystem
+      delete world.__pwOldFindGrabCandidateAnimalSystem
     }
   })
 
@@ -1154,41 +1164,45 @@ test('loading: does not show Loading Resources screen at startup', async ({ page
   expect(visible).toBe(false)
 })
 
-test('loading: first dungeon enter quickly reaches whiteout', async ({ page }) => {
+test('loading: dungeon enter shows backdrop progress, then tunnel reaches whiteout', async ({ page }) => {
   test.setTimeout(120_000)
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
   await expect(page.locator('#warp-overlay')).toBeVisible({ timeout: 20_000 })
-  await page.waitForFunction(() => Boolean(window.Experience?.world?.chunkManager), { timeout: 90_000 })
+  await page.waitForFunction(() => Boolean(window.WarpOverlay), { timeout: 20_000 })
 
   await page.evaluate(() => {
-    window.localStorage?.removeItem?.('mmmc:warp_portal_visited_v1')
-    const world = window.Experience?.world
-    if (!world)
-      return
-    world._enterDungeon = () => {}
-    world._emitDungeonState = () => {}
-    world._emitDungeonProgress = () => {}
-    world.chunkManager.updateStreaming = () => {}
-    world.chunkManager.pumpIdleQueue = () => {}
-    world._blockDungeonGenerator.generate = () => ({
-      surfaceY: 0,
-      spawn: { x: 0, y: 0, z: 0 },
-      exit: { x: 0, y: 0, z: 0 },
-      enemies: [],
-      interactables: [],
-      reward: null,
-    })
-    world.chunkManager.forceSyncGenerateArea = () => {}
-    world._activatePortal({ id: 'plains', name: '平原', target: { x: 0, z: 0 } })
+    window.WarpOverlay.showBackdropProgress({ text: 'Portal Initiating' })
+  })
+
+  await page.waitForFunction(() => {
+    const wrap = document.getElementById('warp-progress')
+    if (!wrap)
+      return false
+    const style = window.getComputedStyle(wrap)
+    return style.display !== 'none' && style.visibility !== 'hidden'
+  }, { timeout: 1500 })
+
+  await page.waitForFunction(() => {
+    const bar = document.getElementById('warp-progress-bar')
+    if (!bar)
+      return false
+    const w = String(bar.style.width || '')
+    const v = Number(w.replace('%', ''))
+    return Number.isFinite(v) && v > 1
+  }, { timeout: 2000 })
+
+  await page.evaluate(() => {
+    window.WarpOverlay.startTunnel({ text: 'Portal Initiating', durationMs: 900 })
   })
 
   await page.waitForFunction(() => {
     const el = document.getElementById('warp-whiteout')
     if (!el)
       return false
-    const opacity = Number(window.getComputedStyle(el).opacity || 0)
+    const raw = (el.style && el.style.opacity) ? el.style.opacity : window.getComputedStyle(el).opacity
+    const opacity = Number(raw || 0)
     return opacity >= 0.9
-  }, { timeout: 1500 })
+  }, { timeout: 2500 })
 })
 
 test('inventory: world exposes inventorySystem facade', async ({ page }) => {

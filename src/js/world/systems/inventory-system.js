@@ -6,9 +6,11 @@ export default class InventorySystem {
     this.world = ctx?.world || null
     this.resources = ctx?.resources || this.world?.resources || null
     this._saveTimer = null
+    this._warehousePage = 1
 
     this.config = {
       backpack: { slots: 24, maxWeight: 60 },
+      warehouse: { pagesTotal: 5, unlockedPages: 2 },
       grid: { cols: 8, rows: 6 },
       gridMask: [
         [0, 1, 1, 1, 1, 1, 1, 0],
@@ -75,6 +77,8 @@ export default class InventorySystem {
     }
 
     this.inventory = this._loadInventory()
+    this._ensureWarehousePages()
+    this._warehousePage = this._sanitizeWarehousePage(this.inventory?.ui?.warehousePage ?? 1)
 
     if (this.world) {
       this.world.inventorySystem = this
@@ -92,17 +96,14 @@ export default class InventorySystem {
 
   getBagItems(bagName) {
     if (!this.inventory)
-      this.inventory = { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
+      this.inventory = { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
     if (!this.inventory.gridLayouts)
-      this.inventory.gridLayouts = { backpack: {} }
+      this.inventory.gridLayouts = { backpack: {}, warehousePages: [] }
     if (!this.inventory.gridLayouts.backpack)
       this.inventory.gridLayouts.backpack = {}
     if (bagName === 'warehouse') {
-      if (!this.inventory.warehouse)
-        this.inventory.warehouse = { items: {} }
-      if (!this.inventory.warehouse.items)
-        this.inventory.warehouse.items = {}
-      return this.inventory.warehouse.items
+      this._ensureWarehousePages()
+      return this._getWarehousePageItems(this._warehousePage)
     }
     if (!this.inventory.backpack)
       this.inventory.backpack = { items: {} }
@@ -124,10 +125,16 @@ export default class InventorySystem {
   emitInventoryState() {
     const world = this.world
     const backpackItems = this.getBagItems('backpack')
+    const warehouseItems = this.getBagItems('warehouse')
+    const unlockedPages = this._getWarehouseUnlockedPages()
+    const totalPages = this._getWarehousePagesTotal()
     emitter.emit('inventory:update', {
       panel: world?._activeInventoryPanel ?? null,
       backpack: { ...backpackItems },
-      warehouse: { ...this.getBagItems('warehouse') },
+      warehouse: { ...warehouseItems },
+      warehousePage: this._warehousePage,
+      warehousePagesUnlocked: unlockedPages,
+      warehousePagesTotal: totalPages,
       backpackMeta: {
         slots: Object.keys(backpackItems).length,
         maxSlots: this._getBackpackMaxSlots(),
@@ -137,12 +144,13 @@ export default class InventorySystem {
       grid: { ...(this.config?.grid || { cols: 8, rows: 6 }) },
       itemSizes: { ...(this.config?.itemSizes || {}) },
       backpackGrid: this._buildBackpackGridSnapshot(backpackItems, this.inventory?.gridLayouts?.backpack || {}),
+      warehouseGrid: this._buildBackpackGridSnapshot(warehouseItems, this._getWarehousePageLayout(this._warehousePage)),
     })
   }
 
   emitInventorySummary() {
     const backpackItems = this.getBagItems('backpack')
-    const warehouseItems = this.getBagItems('warehouse')
+    const warehouseItems = this._getAllWarehouseItems()
     const backpackWeight = this._getBagWeight(backpackItems)
     emitter.emit('inventory:summary', {
       backpackTotal: this._getItemTotalCount(backpackItems),
@@ -155,6 +163,18 @@ export default class InventorySystem {
       backpackMaxSlots: this._getBackpackMaxSlots(),
       carriedPet: this.world?._carriedAnimal?.group ? (this.world._carriedAnimal._typeLabel || this.world._carriedAnimal._resourceKey || '') : '',
     })
+  }
+
+  setWarehousePage(page) {
+    const next = this._sanitizeWarehousePage(page)
+    if (next === this._warehousePage)
+      return
+    this._warehousePage = next
+    if (!this.inventory.ui)
+      this.inventory.ui = { warehousePage: next }
+    this.inventory.ui.warehousePage = next
+    this.emitInventoryState()
+    this._scheduleSave()
   }
 
   addItem(bagName, itemId, amount = 1) {
@@ -256,49 +276,61 @@ export default class InventorySystem {
   _loadInventory() {
     try {
       if (typeof window === 'undefined')
-        return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
+        return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
       const raw = window.localStorage?.getItem?.('mmmc:inventory_v1')
       if (!raw)
-        return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
+        return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
       const parsed = JSON.parse(raw)
       const backpack = parsed?.backpack?.items && typeof parsed.backpack.items === 'object'
         ? parsed.backpack.items
         : {}
-      const warehouse = parsed?.warehouse?.items && typeof parsed.warehouse.items === 'object'
+      const legacyWarehouse = parsed?.warehouse?.items && typeof parsed.warehouse.items === 'object'
         ? parsed.warehouse.items
         : {}
+      const rawPages = Array.isArray(parsed?.warehousePages) ? parsed.warehousePages : null
+      const pages = rawPages
+        ? rawPages.map(p => (p && typeof p === 'object' ? (p.items && typeof p.items === 'object' ? p.items : p) : {}))
+        : [legacyWarehouse]
       const gridLayoutsRaw = parsed?.gridLayouts && typeof parsed.gridLayouts === 'object'
         ? parsed.gridLayouts
         : {}
+      const ui = parsed?.ui && typeof parsed.ui === 'object' ? parsed.ui : {}
       return {
         backpack: { items: this._sanitizeItemMap(backpack) },
-        warehouse: { items: this._sanitizeItemMap(warehouse) },
+        warehouse: { items: {} },
+        warehousePages: pages.map(items => ({ items: this._sanitizeItemMap(items) })),
         gridLayouts: this._sanitizeGridLayouts(gridLayoutsRaw),
+        ui: { warehousePage: this._sanitizeWarehousePage(ui?.warehousePage ?? 1) },
       }
     }
     catch {
-      return { backpack: { items: {} }, warehouse: { items: {} }, gridLayouts: { backpack: {} } }
+      return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
     }
   }
 
   _sanitizeGridLayouts(raw) {
     const src = raw && typeof raw === 'object' ? raw : {}
-    const backpack = src?.backpack && typeof src.backpack === 'object' ? src.backpack : {}
-    const next = { backpack: {} }
-    for (const [uid, entry] of Object.entries(backpack)) {
-      if (typeof uid !== 'string' || !entry || typeof entry !== 'object')
-        continue
-      const x = Math.floor(Number(entry.x))
-      const y = Math.floor(Number(entry.y))
-      if (!Number.isFinite(x) || !Number.isFinite(y))
-        continue
-      next.backpack[uid] = {
-        x,
-        y,
-        rotated: !!entry.rotated,
+    const sanitizeLayoutMap = (map) => {
+      const next = {}
+      const srcMap = map && typeof map === 'object' ? map : {}
+      for (const [uid, entry] of Object.entries(srcMap)) {
+        if (typeof uid !== 'string' || !entry || typeof entry !== 'object')
+          continue
+        const x = Math.floor(Number(entry.x))
+        const y = Math.floor(Number(entry.y))
+        if (!Number.isFinite(x) || !Number.isFinite(y))
+          continue
+        next[uid] = { x, y, rotated: !!entry.rotated }
       }
+      return next
     }
-    return next
+
+    const backpack = src?.backpack && typeof src.backpack === 'object' ? src.backpack : {}
+    const rawPages = Array.isArray(src?.warehousePages) ? src.warehousePages : []
+    return {
+      backpack: sanitizeLayoutMap(backpack),
+      warehousePages: rawPages.map(p => sanitizeLayoutMap(p)),
+    }
   }
 
   _sanitizeItemMap(map) {
@@ -315,6 +347,93 @@ export default class InventorySystem {
       next[key] = count
     }
     return next
+  }
+
+  _getWarehousePagesTotal() {
+    const v = this.config?.warehouse?.pagesTotal
+    return Math.max(1, Math.floor(Number(v) || 5))
+  }
+
+  _getWarehouseUnlockedPages() {
+    const total = this._getWarehousePagesTotal()
+    const v = this.config?.warehouse?.unlockedPages
+    return Math.max(1, Math.min(total, Math.floor(Number(v) || 2)))
+  }
+
+  _sanitizeWarehousePage(page) {
+    const unlocked = this._getWarehouseUnlockedPages()
+    const n = Math.floor(Number(page) || 1)
+    if (!Number.isFinite(n))
+      return 1
+    return Math.max(1, Math.min(unlocked, n))
+  }
+
+  _ensureWarehousePages() {
+    const total = this._getWarehousePagesTotal()
+    if (!this.inventory)
+      this.inventory = {}
+
+    if (!Array.isArray(this.inventory.warehousePages))
+      this.inventory.warehousePages = []
+    while (this.inventory.warehousePages.length < total)
+      this.inventory.warehousePages.push({ items: {} })
+    if (this.inventory.warehousePages.length > total)
+      this.inventory.warehousePages.length = total
+
+    for (const page of this.inventory.warehousePages) {
+      if (!page || typeof page !== 'object')
+        continue
+      if (!page.items || typeof page.items !== 'object')
+        page.items = {}
+    }
+
+    if (!this.inventory.gridLayouts || typeof this.inventory.gridLayouts !== 'object')
+      this.inventory.gridLayouts = { backpack: {}, warehousePages: [] }
+    if (!this.inventory.gridLayouts.backpack || typeof this.inventory.gridLayouts.backpack !== 'object')
+      this.inventory.gridLayouts.backpack = {}
+    if (!Array.isArray(this.inventory.gridLayouts.warehousePages))
+      this.inventory.gridLayouts.warehousePages = []
+    while (this.inventory.gridLayouts.warehousePages.length < total)
+      this.inventory.gridLayouts.warehousePages.push({})
+    if (this.inventory.gridLayouts.warehousePages.length > total)
+      this.inventory.gridLayouts.warehousePages.length = total
+
+    if (!this.inventory.ui || typeof this.inventory.ui !== 'object')
+      this.inventory.ui = { warehousePage: 1 }
+    this.inventory.ui.warehousePage = this._sanitizeWarehousePage(this.inventory.ui.warehousePage ?? 1)
+  }
+
+  _getWarehousePageItems(page) {
+    this._ensureWarehousePages()
+    const idx = Math.max(0, Math.min(this.inventory.warehousePages.length - 1, Math.floor(Number(page) || 1) - 1))
+    const p = this.inventory.warehousePages[idx]
+    if (!p.items || typeof p.items !== 'object')
+      p.items = {}
+    return p.items
+  }
+
+  _getWarehousePageLayout(page) {
+    this._ensureWarehousePages()
+    const idx = Math.max(0, Math.min(this.inventory.gridLayouts.warehousePages.length - 1, Math.floor(Number(page) || 1) - 1))
+    const layout = this.inventory.gridLayouts.warehousePages[idx]
+    return layout && typeof layout === 'object' ? layout : {}
+  }
+
+  _getAllWarehouseItems() {
+    this._ensureWarehousePages()
+    const merged = {}
+    for (const page of this.inventory.warehousePages) {
+      const items = page?.items
+      if (!items || typeof items !== 'object')
+        continue
+      for (const [id, count] of Object.entries(items)) {
+        const n = Math.max(0, Math.floor(Number(count) || 0))
+        if (n <= 0)
+          continue
+        merged[id] = (merged[id] || 0) + n
+      }
+    }
+    return merged
   }
 
   _saveNow() {

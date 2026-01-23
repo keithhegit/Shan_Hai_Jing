@@ -179,6 +179,116 @@
 - 鸡：最低 `maxHp` 与 `attackDamage`
 - 狼：最高 `maxHp` 与 `attackDamage`
 
+### 3.3 数值管理列（NPC/minion/boss/道具/消耗品 + Icon 口径）
+
+本节的目标是把“需要做成可配置表”的列先对齐，避免后续边做边补字段导致反复改 UI/存档/生成逻辑。这里不填具体数值，只定义列。
+
+图标像素建议的前提：
+
+- 当前背包/仓库网格单元在 UI 上按 `42px` 渲染（会缩放）
+- 建议准备“按格子数倍增”的正方形/长方形透明底图，保证缩放后依然清晰
+- 默认建议：每 1 格使用 64px（即 1×1 → 64×64）；更大的物品按格子倍数等比放大
+
+| 类型 | 主键/标识列 | 数值管理列（建议最小集） | 捕捉/产出列（如适用） | 背包格子（w×h） | Icon_img | Icon_px 建议 |
+| --- | --- | --- | --- | --- | --- | --- |
+| NPC（可捕捉） | `npcId` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_small`） | 捕捉产物：2×2 | `img/icons/canister_small.png` | 128×128 |
+| Minion（可捕捉） | `enemyId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_medium`） | 捕捉产物：2×2 | `img/icons/canister_medium.png` | 128×128 |
+| Boss（可捕捉） | `bossId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`, `phase`（可选） | `captureCanisterId`（默认 `canister_large`） | 捕捉产物：4×4 | `img/icons/canister_large.png` | 256×256 |
+| 其他道具（Item） | `itemId` / `resourceKey` | `type`, `stackable`, `maxStack`（可选）, `weight`, `rarity`（可选） | `dropRate` / `lootTableId`（可选） | 例：`material_gun` 2×4 | `img/icons/{itemId}.png` | 2×4 → 128×256；1×1 → 64×64；1×2 → 64×128 |
+| 消耗品（Consumable） | `itemId` / `resourceKey` | `stackable`, `maxStack`, `cooldownMs`（可选）, `useEffectId` / `effectValue` | `useConsumes`（是否消耗） | 建议 1×1 或 1×2 | `img/icons/{itemId}.png` | 1×1 → 64×64；1×2 → 64×128 |
+
+如果你后续给我一批 icon，我会按这张表的 `Icon_img` 路径约定把它们接进背包/仓库网格渲染，并把现有 SVG 占位替换为图片。
+
+#### 3.3.1 可捕捉目标清单（当前实现穷举）
+
+说明：当前实现里，捕捉产出是“按目标类别分档”的收容罐（Small/Medium/Large），并不区分“抓到哪一种怪就产出哪一种罐”。因此你需要准备 PNG 的重点是 `canister_*`（见 3.3.2），而不是每个 NPC/敌人各自一张“掉落物图标”。
+
+Hub（NPC/动物，`resourceKey`）：
+
+| 类别 | resourceKey | 现有显示名（代码内 label） | 捕捉产出 itemId |
+| --- | --- | --- | --- |
+| NPC（动物） | `animal_pig` | `矿工鼠` | `canister_small` |
+| NPC（动物） | `animal_sheep` | `绵绵球` | `canister_small` |
+| NPC（动物） | `animal_chicken` | `小鸡` | `canister_small` |
+| NPC（动物） | `animal_cat` | `猫猫` | `canister_small` |
+| NPC（动物） | `animal_wolf` | `狼` | `canister_small` |
+| NPC（动物） | `animal_horse` | `马` | `canister_small` |
+| NPC（动物） | `animal_dog` | `狗狗` | `canister_small` |
+
+Dungeon（minion/boss 的生成池，`type` → `resourceKey=enemy_{type}`）：
+
+| dungeonType | stage | adds（minion type 列表） | boss type（stage=4） |
+| --- | ---: | --- | --- |
+| plains | 1 | `tribal` |  |
+| plains | 2 | `orc` |  |
+| plains | 3 | `tribal`, `orc` |  |
+| plains | 4 |  | `giant` |
+| snow | 1 | `yeti` |  |
+| snow | 2 | `yeti` |  |
+| snow | 3 | `yeti2` |  |
+| snow | 4 |  | `yeti2` |
+| desert | 1 | `cactoro` |  |
+| desert | 2 | `dino` |  |
+| desert | 3 | `cactoro`, `dino` |  |
+| desert | 4 |  | `dino` |
+| forest | 1 | `frog` |  |
+| forest | 2 | `monkroose` |  |
+| forest | 3 | `ninja`, `monkroose` |  |
+| forest | 4 |  | `mushroomking` |
+| mine | 1 | `skeleton` |  |
+| mine | 2 | `orc_skull` |  |
+| mine | 3 | `skeleton_armor` |  |
+| mine | 4 |  | `skeleton_armor` |
+
+Dungeon 捕捉产出规则（当前实现）：
+
+- Hub：捕捉任意目标 → `canister_small`
+- Dungeon：捕捉 minion → `canister_medium`；捕捉 boss（`isBoss=true`）→ `canister_large`
+
+补充：项目里已加载但当前未加入地牢生成池的敌人模型 `resourceKey`（后续可再决定是否进池）：
+
+- `enemy_demon`
+- `enemy_goblin`
+- `enemy_hedgehog`
+- `enemy_wizard`
+- `enemy_zombie`
+
+#### 3.3.2 背包/仓库 itemId 清单（当前实现穷举，按此准备 PNG）
+
+说明：当前 UI 的背包/仓库格子图标路径统一按 `img/icons/{itemId}.png` 约定。
+
+| itemId | 类别 | 堆叠规则 | 背包格子（w×h） | Icon_img | Icon_px 建议 |
+| --- | --- | --- | --- | --- | --- |
+| `coin` | 货币 | Stack | 1×1 | `img/icons/coin.png` | 64×64 |
+| `stone` | 材料 | Instance | 1×1 | `img/icons/stone.png` | 64×64 |
+| `fence` | 任务奖励/材料 | Instance | 1×1 | `img/icons/fence.png` | 64×64 |
+| `crystal_small` | 地牢矿物 | Instance | 1×1 | `img/icons/crystal_small.png` | 64×64 |
+| `crystal_big` | 地牢矿物 | Instance | 1×1 | `img/icons/crystal_big.png` | 64×64 |
+| `material_gun` | 武器（主手） | Instance | 2×4 | `img/icons/material_gun.png` | 128×256 |
+| `key_plains` | 钥匙 | Stack | 1×2 | `img/icons/key_plains.png` | 64×128 |
+| `key_snow` | 钥匙 | Stack | 1×2 | `img/icons/key_snow.png` | 64×128 |
+| `key_desert` | 钥匙 | Stack | 1×2 | `img/icons/key_desert.png` | 64×128 |
+| `key_forest` | 钥匙 | Stack | 1×2 | `img/icons/key_forest.png` | 64×128 |
+| `canister_small` | 灵兽罐（小） | Instance | 2×2 | `img/icons/canister_small.png` | 128×128 |
+| `canister_medium` | 灵兽罐（中） | Instance | 2×2 | `img/icons/canister_medium.png` | 128×128 |
+| `canister_large` | 灵兽罐（大/Boss） | Instance | 4×4 | `img/icons/canister_large.png` | 256×256 |
+| `Axe_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Wood.png` | 128×256 |
+| `Axe_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Stone.png` | 128×256 |
+| `Axe_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Gold.png` | 128×256 |
+| `Axe_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Diamond.png` | 128×256 |
+| `Pickaxe_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Wood.png` | 128×256 |
+| `Pickaxe_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Stone.png` | 128×256 |
+| `Pickaxe_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Gold.png` | 128×256 |
+| `Pickaxe_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Pickaxe_Diamond.png` | 128×256 |
+| `Shovel_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Wood.png` | 128×256 |
+| `Shovel_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Stone.png` | 128×256 |
+| `Shovel_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Gold.png` | 128×256 |
+| `Shovel_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Shovel_Diamond.png` | 128×256 |
+| `Sword_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Wood.png` | 128×256 |
+| `Sword_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Stone.png` | 128×256 |
+| `Sword_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Gold.png` | 128×256 |
+| `Sword_Diamond` | 工具/武器 | Instance | 2×4 | `img/icons/Sword_Diamond.png` | 128×256 |
+
 ## 4. 事件与状态
 
 ### 4.1 事件（UI → World）
@@ -235,6 +345,12 @@
 ### 8.2 捕捉即“处决”（The Tether Mechanic）
 
 捕捉是一个高风险的引导（Channeling）过程，核心变量与状态机如下。
+
+当前实现（对照，便于验收与联调）：
+
+- 捕捉范围：Hub 的 NPC、Dungeon 的 minion、Boss 都可捕捉
+- 收容罐分档：NPC → `canister_small`；minion → `canister_medium`；boss → `canister_large`
+- 产出位置：Dungeon 捕捉后掉落在地；Hub 捕捉后直接放入背包（不生成地面掉落）
 
 #### 前置条件（Check）
 

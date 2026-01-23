@@ -292,7 +292,7 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - 做法：先定义 `WorldContext`（只读依赖注入）与系统接口（`init/update/destroy`），World 只通过接口与系统交互
 - 优点：很快获得清晰边界，后续新增功能不会回流到 World
 - 缺点：需要先做一次“接口对齐”，会有短期改动面
-- 当前选择：已选方向 B，并已先从 Beam 系统开始抽取（`SystemManager` + `WorldContext` + `BeamsSystem`）
+- 当前选择：已选方向 B；已完成 `SystemManager` + `WorldContext` + `BeamsSystem`，并将“进/出地牢 + 加载 gating”抽取到 `DungeonSystem`，将“捕捉”抽取到 `CaptureSystem`；`world.js` 保留同名方法作为薄封装委托
 
 **方向 C：最彻底的“World 拆成 HubWorld + DungeonWorld”**
 
@@ -491,3 +491,62 @@ I3.4 与战斗/通关系统的接口预留（建议在 I4 前补齐）
 - `pnpm run build`
 - `npx playwright test tests/browsers.test.js --project=chromium`
 - 例外：纯文档变更可跳过 `playwright`
+
+### 6.1 Playwright 回归提效（按版本迭代的“选择性执行”）
+
+现状：Playwright 用例数量增长后（当前 34 项），单次全跑耗时 ~10 分钟，会直接影响“问题定位 → 修复 → 回归验证”的迭代节奏。
+
+目标：把“每次都跑全量”改成“按变更风险选择性跑”，同时保留“合并前/夜间全量”的兜底。
+
+关键变量（决定耗时与覆盖的杠杆）：
+
+- 用例分层：哪些用例每次必跑、哪些只在合并前/夜间跑
+- 用例成本：每条用例的真实耗时（启动/切世界/资源加载/等待）
+- 并行度：workers 与 shard（并行会放大 flake，需要同步降低不稳定因子）
+- 覆盖口径：以“本次迭代改动涉及的链路”为中心，而不是以“总清单”为中心
+
+建议策略（master 口径，后续按需要落地到 CI/脚本）：
+
+1. 分层回归（Tiering）
+
+- T0（PR/本地快速回归，目标 ≤ 2–3 分钟）：只跑 Smoke 子集，覆盖“Hub 启动 → 进地牢 → 出地牢”最小闭环 + 关键稳定性断言（canvas 绑定、输入未锁死、核心 UI 可见）
+- T1（合并前回归，目标 ≤ 10–15 分钟）：跑 `@regression`（包含本轮迭代新增/修复的相关链路）
+- T2（夜间/手动全量，允许 20+ 分钟）：全跑（含多浏览器、trace/video 打开、repeat 以捕获 flake）
+
+2. 按“版本迭代问题”选择用例（Change → Risk → Suite）
+
+- 为每条用例打上“功能域标签”（例如 `@loading`、`@portal`、`@dungeon`、`@camera`、`@combat`、`@ui`）
+- 为每次版本迭代（本轮目标/修复点）定义“必跑标签集合”
+  - 例：本轮修复“启动闪屏/加载过渡” → 必跑 `@loading @portal`
+  - 例：本轮改动“相机遮挡/锁定镜头” → 必跑 `@camera @combat`
+- 为每次 PR/版本变更建立“文件路径 → 功能域标签”的映射，用于自动选择需要跑的集合（兜底：涉及核心入口/Experience/World 的改动默认提升到 T1）
+
+3. 降低单条用例成本（保持断言不变，减少无意义等待）
+
+- 把“固定时间等待”尽量替换为“事件/状态就绪等待”（例如等某个 UI 事件、Scene/World 状态标记、资源计数到达阈值）
+- 尽量把高成本步骤集中在 `beforeAll`（复用同一浏览器上下文/同一 dev server），减少每条用例重复冷启动
+- 将“资源加载/大模型”场景用更轻的 fixture 覆盖（如果用例目的不是验证资源本体）
+
+4. 并行与分片（把总耗时变成可横向扩展）
+
+- 本地优先提升 workers（在保证稳定性的前提下），CI 使用 shard 拆分到多机/多 job
+- 对“必须串行”的链路（共享同一存档/同一世界状态）做显式分组，避免把全套测试都锁成串行
+
+5. 稳定性优先（否则提速会放大 flake）
+
+- 对重渲染/三维场景：优先断言“状态与可交互性”，避免对帧级画面做脆弱断言
+- 把“易波动”用例与“gate 用例”分离：gate 用例只保留高确定性断言，减少误报导致的重复跑
+
+可落地性评估（当前代码可直接用，不用改测试结构）：
+
+- 用例已天然具备“子集”入口：`tests/browsers.test.js` 中 Smoke 用例命名以 `smoke:` 前缀开头
+- 可直接用 `--grep` 选择性执行：
+  - T0：`npx playwright test tests/browsers.test.js --project=chromium -g "^smoke:"`
+  - 全量：`npx playwright test tests/browsers.test.js --project=chromium`
+- T1/T2 的“标签体系”目前还没有落地（尚未在测试里使用 `@smoke/@regression` 或 `test.describe` 标签），但可以在下一轮将“命名约定”平滑升级为“tag + grep”
+
+落地顺序（后续迭代实施，不在本轮执行代码）：
+
+- 第一步：把现有 34 条用例按功能域归类，定义 `@smoke/@regression` 最小集
+- 第二步：把“版本迭代问题 → 必跑标签集合”作为每次迭代入口的固定字段（写在迭代分支/PR 描述中即可）
+- 第三步：在 CI 中引入两套命令：T0（默认）与 T1（合并前），T2 夜间跑全量

@@ -26,6 +26,11 @@ const gridState = ref(null)
 const gridDrag = ref(null)
 const gridHover = ref(null)
 const gridCellPx = 42
+const warehousePage = ref(1)
+const warehousePagesUnlocked = ref(2)
+const warehousePagesTotal = ref(5)
+const warehouseGrid = ref(null)
+const warehouseGridState = ref(null)
 const chestModal = ref(null)
 const portalSelectModal = ref(null)
 const visitedPortals = new Set()
@@ -72,13 +77,15 @@ function onInteractableOpen(payload) {
 
 function onLoadingShow(payload) {
   loadingState.value = payload
-  warpOverlay.show({ text: 'Portal Initiating' })
-  warpOverlay.engageHyperdrive({ durationMs: 6000 })
   const kind = payload?.kind || null
   const portalId = payload?.portalId ? String(payload.portalId) : null
   lastLoadingPortalId = portalId
-  if (kind === 'dungeon-enter' && portalId && !visitedPortals.has(portalId))
-    warpOverlay.whiteoutSoon()
+  if (kind === 'dungeon-enter') {
+    warpOverlay.showBackdropProgress({ text: 'Portal Initiating' })
+    return
+  }
+  warpOverlay.show({ text: 'Portal Initiating' })
+  warpOverlay.engageHyperdrive({ durationMs: 6000 })
 }
 
 function onLoadingHide() {
@@ -89,6 +96,15 @@ function onLoadingHide() {
     lastLoadingPortalId = null
   }
   warpOverlay.completeSoon()
+}
+
+function onDungeonMeshReady() {
+  if (!loadingState.value)
+    return
+  if (loadingState.value.kind !== 'dungeon-enter')
+    return
+  warpOverlay.markBackdropReady()
+  warpOverlay.startTunnel({ text: 'Portal Initiating', durationMs: 6000 })
 }
 
 function onDungeonProgress(payload) {
@@ -212,10 +228,19 @@ function onInventoryUpdate(payload) {
   if (payload?.panel)
     inventoryPanel.value = payload.panel
   backpackGrid.value = payload?.backpackGrid || null
+  warehouseGrid.value = payload?.warehouseGrid || null
+  if (payload?.warehousePage)
+    warehousePage.value = Math.max(1, Math.floor(Number(payload.warehousePage) || 1))
+  if (payload?.warehousePagesUnlocked)
+    warehousePagesUnlocked.value = Math.max(1, Math.floor(Number(payload.warehousePagesUnlocked) || 1))
+  if (payload?.warehousePagesTotal)
+    warehousePagesTotal.value = Math.max(1, Math.floor(Number(payload.warehousePagesTotal) || 1))
   if (!gridDrag.value) {
     const rawGrid = backpackGrid.value ? toRaw(backpackGrid.value) : null
     gridState.value = rawGrid ? structuredClone(rawGrid) : null
   }
+  const rawWh = warehouseGrid.value ? toRaw(warehouseGrid.value) : null
+  warehouseGridState.value = rawWh ? structuredClone(rawWh) : null
 }
 
 function closeInventoryPanel() {
@@ -228,6 +253,16 @@ function transferItem(from, to, itemId, amount = 1) {
   if (!from || !to || !itemId)
     return
   emitter.emit('inventory:transfer', { from, to, itemId, amount })
+}
+
+function setWarehousePage(nextPage) {
+  const page = Math.max(1, Math.floor(Number(nextPage) || 1))
+  if (page > warehousePagesUnlocked.value)
+    return
+  if (warehousePage.value === page)
+    return
+  warehousePage.value = page
+  emitter.emit('inventory:warehouse_page', { page })
 }
 
 function equipItem(itemId) {
@@ -359,6 +394,15 @@ function gridCellActive(index) {
   return grid.mask?.[y]?.[x] !== 0
 }
 
+function gridCellActiveBy(grid, index) {
+  if (!grid)
+    return false
+  const i = Number(index)
+  const x = (i - 1) % grid.cols
+  const y = Math.floor((i - 1) / grid.cols)
+  return grid.mask?.[y]?.[x] !== 0
+}
+
 function gridPointerToCell(event) {
   const el = event.currentTarget
   if (!el)
@@ -461,6 +505,7 @@ onMounted(() => {
   emitter.on('interactable:open', onInteractableOpen)
   emitter.on('loading:show', onLoadingShow)
   emitter.on('loading:hide', onLoadingHide)
+  emitter.on('loading:dungeon_mesh_ready', onDungeonMeshReady)
   emitter.on('dungeon:progress', onDungeonProgress)
   emitter.on('dungeon:progress_clear', onDungeonProgressClear)
   emitter.on('dungeon:toast', onDungeonToast)
@@ -485,6 +530,7 @@ onBeforeUnmount(() => {
   emitter.off('interactable:open', onInteractableOpen)
   emitter.off('loading:show', onLoadingShow)
   emitter.off('loading:hide', onLoadingHide)
+  emitter.off('loading:dungeon_mesh_ready', onDungeonMeshReady)
   emitter.off('dungeon:progress', onDungeonProgress)
   emitter.off('dungeon:progress_clear', onDungeonProgressClear)
   emitter.off('dungeon:toast', onDungeonToast)
@@ -966,9 +1012,110 @@ onBeforeUnmount(() => {
           </div>
 
           <div v-if="inventoryPanel === 'warehouse'" class="rounded-2xl border border-white/15 bg-black/30 p-4">
-            <div class="mb-3 flex items-center justify-between">
+            <div class="mb-2 flex items-center justify-between gap-3">
               <div class="text-sm font-bold text-white/90">
-                仓库
+                仓库 · 第 {{ warehousePage }} 页
+              </div>
+              <div class="flex items-center gap-1">
+                <button
+                  v-for="p in warehousePagesTotal"
+                  :key="`whp:${p}`"
+                  class="rounded-lg border px-2 py-1 text-[11px] font-bold"
+                  :class="p === warehousePage ? 'border-white/30 bg-white/15' : (p <= warehousePagesUnlocked ? 'border-white/15 bg-white/10 hover:bg-white/15' : 'border-white/10 bg-white/5 opacity-60')"
+                  :disabled="p > warehousePagesUnlocked"
+                  @click="setWarehousePage(p)"
+                >
+                  <span v-if="p <= warehousePagesUnlocked">{{ p }}</span>
+                  <span v-else>锁 {{ p }}</span>
+                </button>
+              </div>
+            </div>
+            <div class="mb-3 text-xs opacity-70">
+              默认解锁 1-{{ warehousePagesUnlocked }} 页；第 3-5 页锁定，后续可继续解锁
+            </div>
+
+            <div v-if="warehouseGridState" class="mb-4">
+              <div
+                class="relative rounded-xl border border-white/10 bg-black/35 p-3"
+                :style="{ width: `${warehouseGridState.cols * gridCellPx + 24}px` }"
+              >
+                <div
+                  class="relative"
+                  :style="{ width: `${warehouseGridState.cols * gridCellPx}px`, height: `${warehouseGridState.rows * gridCellPx}px` }"
+                >
+                  <div
+                    class="absolute inset-0 grid gap-[2px]"
+                    :style="{
+                      gridTemplateColumns: `repeat(${warehouseGridState.cols}, ${gridCellPx - 2}px)`,
+                      gridTemplateRows: `repeat(${warehouseGridState.rows}, ${gridCellPx - 2}px)`,
+                    }"
+                  >
+                    <div
+                      v-for="i in (warehouseGridState.cols * warehouseGridState.rows)"
+                      :key="`whcell:${i}`"
+                      class="rounded-md border"
+                      :class="gridCellActiveBy(warehouseGridState, i) ? 'border-white/5 bg-white/5' : 'border-transparent bg-transparent'"
+                    />
+                  </div>
+
+                  <div
+                    v-for="it in (warehouseGridState.items || [])"
+                    :key="`whgi:${it.uid}`"
+                    class="pointer-events-none absolute flex items-center justify-center rounded-lg border border-white/10 bg-white/5 px-2 text-center text-[11px] font-semibold text-white/90"
+                    :style="{
+                      left: `${it.x * gridCellPx}px`,
+                      top: `${it.y * gridCellPx}px`,
+                      width: `${it.w * gridCellPx}px`,
+                      height: `${it.h * gridCellPx}px`,
+                    }"
+                  >
+                    <div class="relative flex w-full items-center gap-2 overflow-hidden">
+                      <div
+                        v-if="Number(it.count) > 1"
+                        class="absolute right-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white/90"
+                      >
+                        x{{ it.count }}
+                      </div>
+                      <svg
+                        v-if="gridIconKind(it.itemId) === 'coin'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
+                        <path d="M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'key'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M10 14a4 4 0 1 1 1.17-2.83L20 11v3h-2v2h-2v2h-3v-2.2l-1.83-.12A4 4 0 0 1 10 14Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'canister'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                        <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                      </svg>
+                      <svg
+                        v-else-if="gridIconKind(it.itemId) === 'gun'"
+                        class="h-4 w-4 shrink-0 opacity-90"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                      >
+                        <path d="M4 14h10l2-4h4v4h-2v2h-6v-2H4v-2Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                      </svg>
+                      <span class="min-w-0 truncate">
+                        {{ itemLabel(it.itemId) }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             <div v-if="bagEntries(inventoryData.warehouse).length === 0" class="text-sm opacity-80">
