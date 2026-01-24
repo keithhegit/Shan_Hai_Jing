@@ -445,6 +445,7 @@ function selectGridItem(uid) {
   if (!item)
     return
   inventorySelected.value = { uid: item.uid, itemId: item.itemId, count: item.count }
+  emitter.emit('inventory:select', { itemId: item.itemId, uid: item.uid })
 }
 
 function openDiscardConfirmByUid(uid) {

@@ -139,6 +139,7 @@ export default class InteractableSystem {
           itemId,
           count,
           allowWarehouseFallback: world.currentWorld !== 'dungeon',
+          canisterMeta: world._activeInteractable.canisterMeta || null,
         })
         if (!ok)
           return

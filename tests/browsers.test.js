@@ -235,6 +235,119 @@ test('combat: lock-on toggles and melee hit reduces hp', async ({ page }) => {
   expect(consoleErrors, `console.error:\n${consoleErrors.join('\n')}`).toEqual([])
 })
 
+test('vNext-0: throwing a captured canister summons ally and consumes canister', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => Boolean(window.Experience?.world?.player), { timeout: 90_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    world._addInventoryItem?.('backpack', 'canister_small', 1)
+    world.inventorySystem?.recordCanisterMeta?.('canister_small', {
+      capturedResourceKey: 'animal_wolf',
+      capturedKind: 'npc',
+      capturedDisplayName: '狼',
+    })
+  })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    return (world?._inventory?.backpack?.items?.canister_small || 0) >= 1
+  }, { timeout: 20_000 })
+
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    world._armCanisterThrow?.('canister_small')
+    world._throwArmedCanister?.()
+  })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    const allies = world?._summonedAllies || []
+    return allies.length >= 1
+  }, { timeout: 20_000 })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    return (world?._inventory?.backpack?.items?.canister_small || 0) === 0
+  }, { timeout: 20_000 })
+
+  await page.waitForFunction(() => {
+    const world = window.Experience?.world
+    const ally = (world?._summonedAllies || [])[0]
+    return ally?.group && ally?._resourceKey === 'animal_wolf'
+  }, { timeout: 20_000 })
+})
+
+test('dungeon: enemies should not remain inside solid blocks after update', async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' })
+  await expect(page.locator('#loading-screen')).toBeHidden({ timeout: 90_000 })
+
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._dungeonPortals?.length), { timeout: 90_000 })
+  await page.evaluate(() => {
+    const world = window.Experience.world
+    const portal = (world._dungeonPortals || []).find(p => p.id === 'forest') ?? (world._dungeonPortals || [])[0]
+    if (portal)
+      world._activatePortal(portal)
+  })
+
+  await page.waitForFunction(() => window.Experience?.world?.currentWorld === 'dungeon', { timeout: 30_000 })
+  await page.waitForFunction(() => Boolean(window.Experience?.world?._dungeonEnemies?.length), { timeout: 30_000 })
+
+  const result = await page.evaluate(() => {
+    const world = window.Experience.world
+    const cm = world.chunkManager
+    const enemies = world._dungeonEnemies || []
+    const enemy = enemies.find(e => e?.group && !e?.isDead) || enemies[0]
+    if (!enemy?.group || !cm?.getBlockWorld)
+      return { ok: false, reason: 'missing enemy or chunkManager' }
+
+    const p = world.player?.getPosition?.() || { x: 0, z: 0 }
+    const emptyId = 0
+    let block = null
+    const surfaceY = Number.isFinite(Number(world._dungeonSurfaceY)) ? Number(world._dungeonSurfaceY) : 0
+    const wallYStart = Math.floor(surfaceY) + 1
+    const wallYEnd = wallYStart + 8
+    for (let dx = -10; dx <= 10 && !block; dx++) {
+      for (let dz = -10; dz <= 10 && !block; dz++) {
+        const x = Math.floor(p.x + dx)
+        const z = Math.floor(p.z + dz)
+        for (let y = wallYStart; y <= wallYEnd; y++) {
+          const b = cm.getBlockWorld(x, y, z)
+          if (!b?.id || b.id === emptyId)
+            continue
+          const n1 = cm.getBlockWorld(x + 1, y, z)
+          const n2 = cm.getBlockWorld(x - 1, y, z)
+          const n3 = cm.getBlockWorld(x, y, z + 1)
+          const n4 = cm.getBlockWorld(x, y, z - 1)
+          const hasEmptyNeighbor = (!n1?.id || n1.id === emptyId) || (!n2?.id || n2.id === emptyId) || (!n3?.id || n3.id === emptyId) || (!n4?.id || n4.id === emptyId)
+          if (hasEmptyNeighbor) {
+            block = { x, y, z }
+            break
+          }
+        }
+      }
+    }
+    if (!block)
+      return { ok: false, reason: 'no solid block found nearby' }
+
+    enemy.group.position.set(block.x, block.y + 0.05, block.z)
+    world.dungeonEnemySystem?.updateDungeonEnemies?.()
+
+    const ex = Math.floor(enemy.group.position.x)
+    const ey = Math.floor(enemy.group.position.y)
+    const ez = Math.floor(enemy.group.position.z)
+    const after = cm.getBlockWorld(ex, ey, ez)
+    return { ok: true, insideSolid: !!after?.id && after.id !== emptyId, block, enemy: { x: enemy.group.position.x, y: enemy.group.position.y, z: enemy.group.position.z } }
+  })
+
+  expect(result.ok, result.reason || 'expected test to run').toBeTruthy()
+  expect(result.insideSolid, `enemy still inside solid block: ${JSON.stringify(result)}`).toBeFalsy()
+})
+
 test('material gun: equip from inventory and laser deals dot', async ({ page }) => {
   test.setTimeout(120_000)
   const consoleErrors = []

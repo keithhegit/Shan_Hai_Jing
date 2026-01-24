@@ -341,6 +341,7 @@ export default class DungeonSystem {
       world._lockedEnemy = null
       world._dungeonRewardPending = null
       world._dungeonRewardSpawned = false
+      world._clearSummonedAllies?.()
       if (world._dungeonEnemies) {
         for (const enemy of world._dungeonEnemies)
           enemy?.destroy?.()

@@ -146,8 +146,25 @@ export default class CaptureSystem {
     if (canisterId) {
       const pos = new THREE.Vector3()
       target.group?.getWorldPosition?.(pos)
+      const capturedResourceKey = target?._resourceKey
+        ? String(target._resourceKey)
+        : (() => {
+            const t = String(target?.type || '').trim()
+            if (!t)
+              return null
+            if (t.startsWith('enemy_') || t.startsWith('animal_'))
+              return t
+            return `enemy_${t}`
+          })()
+      const capturedKind = target.isBoss ? 'boss' : (world.currentWorld === 'dungeon' ? 'minion' : 'npc')
+      const capturedDisplayName = target?._typeLabel
+        ? String(target._typeLabel)
+        : (capturedResourceKey ? (world._getModelFilenameByResourceKey?.(capturedResourceKey) || capturedResourceKey) : null)
+      const canisterMeta = capturedResourceKey
+        ? { capturedResourceKey, capturedKind, capturedDisplayName }
+        : null
       if (world.currentWorld === 'dungeon') {
-        world._spawnDungeonItemDrop?.({ itemId: canisterId, amount: 1, x: pos.x, z: pos.z })
+        world._spawnDungeonItemDrop?.({ itemId: canisterId, amount: 1, x: pos.x, z: pos.z, canisterMeta })
         emitter.emit('dungeon:toast', { text: `捕捉成功：${canisterId}（已掉落）` })
         emitter.emit('ui:log', { text: `捕捉成功：${canisterId}（已掉落）` })
 
@@ -163,6 +180,7 @@ export default class CaptureSystem {
       else {
         const dropId = world.dropSystem?.spawnHubDrop?.(canisterId, 1, pos.x, pos.z, {
           persist: true,
+          canisterMeta,
           onPickedUp: () => {
             const w = this.world
             if (!w)

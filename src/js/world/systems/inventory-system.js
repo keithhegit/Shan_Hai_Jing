@@ -223,6 +223,53 @@ export default class InventorySystem {
     return true
   }
 
+  recordCanisterMeta(itemId, meta) {
+    const id = String(itemId || '')
+    if (!id || !id.startsWith('canister_') || !meta || typeof meta !== 'object')
+      return false
+    if (!this.inventory)
+      this.inventory = { backpack: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
+    if (!this.inventory.canisterMeta || typeof this.inventory.canisterMeta !== 'object')
+      this.inventory.canisterMeta = {}
+    if (!Array.isArray(this.inventory.canisterMeta[id]))
+      this.inventory.canisterMeta[id] = []
+    const entry = {
+      capturedResourceKey: meta.capturedResourceKey ? String(meta.capturedResourceKey) : null,
+      capturedKind: meta.capturedKind ? String(meta.capturedKind) : null,
+      capturedDisplayName: meta.capturedDisplayName ? String(meta.capturedDisplayName) : null,
+      capturedAt: Date.now(),
+    }
+    this.inventory.canisterMeta[id].push(entry)
+    this._scheduleSave()
+    return true
+  }
+
+  consumeCanisterMeta(itemId) {
+    const id = String(itemId || '')
+    const list = this.inventory?.canisterMeta?.[id]
+    if (!id || !id.startsWith('canister_') || !Array.isArray(list) || list.length === 0)
+      return null
+    const meta = list.shift()
+    this._scheduleSave()
+    return meta || null
+  }
+
+  peekCanisterMeta(itemId) {
+    const id = String(itemId || '')
+    const list = this.inventory?.canisterMeta?.[id]
+    if (!id || !id.startsWith('canister_') || !Array.isArray(list) || list.length === 0)
+      return null
+    return list[0] || null
+  }
+
+  getCanisterMetaCount(itemId) {
+    const id = String(itemId || '')
+    const list = this.inventory?.canisterMeta?.[id]
+    if (!id || !id.startsWith('canister_') || !Array.isArray(list))
+      return 0
+    return list.length
+  }
+
   transfer(payload) {
     const world = this.world
     const from = payload?.from
@@ -319,10 +366,10 @@ export default class InventorySystem {
   _loadInventory() {
     try {
       if (typeof window === 'undefined')
-        return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
+        return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 }, canisterMeta: {} }
       const raw = window.localStorage?.getItem?.('mmmc:inventory_v1')
       if (!raw)
-        return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
+        return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 }, canisterMeta: {} }
       const parsed = JSON.parse(raw)
       const backpack = parsed?.backpack?.items && typeof parsed.backpack.items === 'object'
         ? parsed.backpack.items
@@ -338,16 +385,33 @@ export default class InventorySystem {
         ? parsed.gridLayouts
         : {}
       const ui = parsed?.ui && typeof parsed.ui === 'object' ? parsed.ui : {}
+      const canisterMeta = parsed?.canisterMeta && typeof parsed.canisterMeta === 'object'
+        ? parsed.canisterMeta
+        : {}
+      const sanitizedCanisterMeta = {}
+      for (const [id, list] of Object.entries(canisterMeta)) {
+        if (typeof id !== 'string' || !id.startsWith('canister_') || !Array.isArray(list))
+          continue
+        sanitizedCanisterMeta[id] = list
+          .filter(v => v && typeof v === 'object')
+          .map(v => ({
+            capturedResourceKey: v.capturedResourceKey ? String(v.capturedResourceKey) : null,
+            capturedKind: v.capturedKind ? String(v.capturedKind) : null,
+            capturedDisplayName: v.capturedDisplayName ? String(v.capturedDisplayName) : null,
+            capturedAt: Number.isFinite(Number(v.capturedAt)) ? Number(v.capturedAt) : null,
+          }))
+      }
       return {
         backpack: { items: this._sanitizeItemMap(backpack) },
         warehouse: { items: {} },
         warehousePages: pages.map(items => ({ items: this._sanitizeItemMap(items) })),
         gridLayouts: this._sanitizeGridLayouts(gridLayoutsRaw),
         ui: { warehousePage: this._sanitizeWarehousePage(ui?.warehousePage ?? 1) },
+        canisterMeta: sanitizedCanisterMeta,
       }
     }
     catch {
-      return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 } }
+      return { backpack: { items: {} }, warehouse: { items: {} }, warehousePages: [], gridLayouts: { backpack: {}, warehousePages: [] }, ui: { warehousePage: 1 }, canisterMeta: {} }
     }
   }
 

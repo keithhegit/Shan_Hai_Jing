@@ -7,6 +7,7 @@ import Experience from '../experience.js'
 // import BlockSelectionHelper from '../interaction/block-selection-helper.js'
 import emitter from '../utils/event-bus.js'
 import BlockDungeonGenerator from './dungeon/block-dungeon-generator.js'
+import HumanoidEnemy from './enemies/humanoid-enemy.js'
 import Environment from './environment.js'
 import Player from './player/player.js'
 import BeamsSystem from './systems/beams-system.js'
@@ -99,6 +100,11 @@ export default class World {
     this._activeChestId = null
 
     this._carriedAnimal = null
+    this._summonedAllies = []
+    this._summonedAlliesGroup = null
+    this._armedCanisterThrow = null
+    this._selectedInventoryItemId = null
+    this._selectedCanisterItemId = null
     this._hubAutomation = null
     this._hubAutomationGroup = null
     this._hubDrops = []
@@ -210,6 +216,11 @@ export default class World {
       // ===== 交互事件绑定：删除/新增方块 =====
       this._onMouseDown = (event) => {
         if (event.button === 2) {
+          if (!this.isPaused && this._armedCanisterThrow) {
+            const ok = this._throwArmedCanister()
+            if (ok)
+              return
+          }
           this._throwCarriedAnimal()
           return
         }
@@ -294,7 +305,23 @@ export default class World {
         this.inventorySystem?.setWarehousePage?.(payload?.page)
       }
       this._onGrabPet = () => {
+        const canisterId = this._selectedCanisterItemId
+        const count = canisterId ? (this._inventory?.backpack?.items?.[canisterId] || 0) : 0
+        if (!this.isPaused && canisterId && count > 0) {
+          const ok = this._armCanisterThrow(canisterId)
+          if (ok) {
+            const label = this._getModelFilenameByResourceKey?.(canisterId) || canisterId
+            emitter.emit('ui:log', { text: `已举起：${label}（右键投掷）` })
+            emitter.emit('dungeon:toast', { text: `已举起：${label}（右键投掷）` })
+          }
+          return
+        }
         this._toggleCarryAnimal()
+      }
+      this._onInventorySelect = (payload) => {
+        const itemId = payload?.itemId ? String(payload.itemId) : null
+        this._selectedInventoryItemId = itemId
+        this._selectedCanisterItemId = itemId && itemId.startsWith('canister_') ? itemId : null
       }
 
       emitter.on('input:toggle_backpack', this._onToggleBackpack)
@@ -305,6 +332,7 @@ export default class World {
       emitter.on('inventory:grid_place', this._onInventoryGridPlace)
       emitter.on('inventory:drop', this._onInventoryDrop)
       emitter.on('inventory:warehouse_page', this._onWarehousePage)
+      emitter.on('inventory:select', this._onInventorySelect)
       emitter.on('input:grab_pet', this._onGrabPet)
 
       this._ensureStarterMatterGun()
@@ -1151,6 +1179,125 @@ export default class World {
 
   _throwCarriedAnimal() {
     return this.hubNpcSystem?.throwCarriedAnimal?.()
+  }
+
+  _armCanisterThrow(itemId) {
+    const id = String(itemId || '')
+    const count = this._inventory?.backpack?.items?.[id] || 0
+    if (!id.startsWith('canister_') || count <= 0)
+      return false
+    this._armedCanisterThrow = { itemId: id }
+    return true
+  }
+
+  _throwArmedCanister() {
+    if (this.isPaused)
+      return false
+    const itemId = this._armedCanisterThrow?.itemId
+    if (!itemId)
+      return false
+    const count = this._inventory?.backpack?.items?.[itemId] || 0
+    if (count <= 0)
+      return false
+
+    const meta = this.inventorySystem?.consumeCanisterMeta?.(itemId) || null
+    const resourceKey = meta?.capturedResourceKey || this._getFallbackSummonResourceKey(itemId)
+    if (!resourceKey)
+      return false
+
+    const playerPos = this.player?.getPosition?.() || { x: 0, y: 0, z: 0 }
+    const spawnPos = new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z)
+    const dir = new THREE.Vector3()
+    this.experience.camera?.instance?.getWorldDirection?.(dir)
+    dir.y = 0
+    if (dir.lengthSq() < 1e-6)
+      dir.set(0, 0, -1)
+    dir.normalize()
+    spawnPos.add(dir.clone().multiplyScalar(2.0))
+
+    this._removeInventoryItem('backpack', itemId, 1)
+    this._emitInventorySummary?.()
+    this._emitInventoryState?.()
+    this._scheduleInventorySave?.()
+
+    const ally = this._spawnSummonedAlly({
+      resourceKey,
+      position: spawnPos,
+      displayName: meta?.capturedDisplayName || null,
+      capturedKind: meta?.capturedKind || null,
+      canisterItemId: itemId,
+      canisterMeta: meta,
+    })
+    if (!ally)
+      return false
+
+    this._armedCanisterThrow = null
+    return true
+  }
+
+  _getFallbackSummonResourceKey(canisterItemId) {
+    const id = String(canisterItemId || '')
+    if (id === 'canister_small')
+      return 'animal_wolf'
+    if (id === 'canister_medium')
+      return 'enemy_orc'
+    if (id === 'canister_large')
+      return 'enemy_giant'
+    return null
+  }
+
+  _ensureSummonedAlliesGroup() {
+    if (this._summonedAlliesGroup)
+      return this._summonedAlliesGroup
+    const group = new THREE.Group()
+    group.name = 'SummonedAllies'
+    this._summonedAlliesGroup = group
+    if (this.currentWorld === 'dungeon' && this._dungeonGroup)
+      this._dungeonGroup.add(group)
+    else
+      this.scene.add(group)
+    return group
+  }
+
+  _spawnSummonedAlly({ resourceKey, position, displayName, capturedKind, canisterItemId, canisterMeta } = {}) {
+    const key = String(resourceKey || '')
+    if (!key)
+      return null
+
+    const group = this._ensureSummonedAlliesGroup()
+    const y = this._getSurfaceY?.(position?.x ?? 0, position?.z ?? 0) ?? (position?.y ?? 0)
+    const spawn = new THREE.Vector3(position?.x ?? 0, y, position?.z ?? 0)
+    const ally = new HumanoidEnemy({ type: key, position: spawn })
+    ally._resourceKey = key
+    ally._typeLabel = displayName || (this._getModelFilenameByResourceKey?.(key) || key)
+    ally._isSummonedAlly = true
+    ally._summonedKind = capturedKind || null
+    ally._summonedFromCanisterId = canisterItemId || null
+    ally._summonedFromCanisterMeta = canisterMeta || null
+
+    group.add(ally.group)
+    this._summonedAllies.push(ally)
+    emitter.emit('ui:log', { text: `灵兽出战：${ally._typeLabel}` })
+    return ally
+  }
+
+  _despawnSummonedAlly(ally) {
+    if (!ally)
+      return false
+    const idx = this._summonedAllies.indexOf(ally)
+    if (idx >= 0)
+      this._summonedAllies.splice(idx, 1)
+    ally.group?.removeFromParent?.()
+    ally.group && (ally.group.visible = false)
+    return true
+  }
+
+  _clearSummonedAllies() {
+    const list = Array.isArray(this._summonedAllies) ? [...this._summonedAllies] : []
+    list.forEach(a => this._despawnSummonedAlly(a))
+    this._summonedAlliesGroup?.removeFromParent?.()
+    this._summonedAlliesGroup = null
+    this._armedCanisterThrow = null
   }
 
   _spawnAnimalThought(animal, text, durationSeconds) {
@@ -2145,6 +2292,8 @@ export default class World {
       emitter.off('inventory:close', this._onInventoryClose)
     if (this._onInventoryTransfer)
       emitter.off('inventory:transfer', this._onInventoryTransfer)
+    if (this._onInventorySelect)
+      emitter.off('inventory:select', this._onInventorySelect)
     if (this._onWarehousePage)
       emitter.off('inventory:warehouse_page', this._onWarehousePage)
     if (this._onInventoryDrop)

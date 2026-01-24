@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { blocks } from '../terrain/blocks-config.js'
 
 export default class DungeonEnemySystem {
   init(ctx) {
@@ -28,6 +29,10 @@ export default class DungeonEnemySystem {
     const now = world.experience.time?.elapsed ?? 0
     const playerPos = world.player?.getPosition?.()
     const playerDead = !!world.player?.isDead
+    const allies = Array.isArray(world._summonedAllies) ? world._summonedAllies : []
+
+    if (allies.length > 0)
+      this.updateSummonedAllies({ dt, now, playerPos })
 
     for (const enemy of world._dungeonEnemies) {
       enemy?.update?.()
@@ -43,18 +48,25 @@ export default class DungeonEnemySystem {
       if (enemy?.isDead)
         continue
 
+      this.resolveIfInsideSolid(enemy)
+
       const data = enemy?.behavior
       if (!data || !enemy?.group)
         continue
 
-      if (playerPos && !playerDead && !enemy.isDead) {
+      if (playerPos && !enemy.isDead) {
+        const target = this.pickTargetForEnemy({ enemy, playerPos, playerDead, allies, now })
+        const targetPos = target?.pos
+        if (!targetPos)
+          continue
+
         const ex = enemy.group.position.x
         const ez = enemy.group.position.z
-        const dxp = playerPos.x - ex
-        const dzp = playerPos.z - ez
+        const dxp = targetPos.x - ex
+        const dzp = targetPos.z - ez
         const d2p = dxp * dxp + dzp * dzp
-        const aggro2 = 9.0 * 9.0
-        const attack2 = 2.2 * 2.2
+        const aggro2 = (target.aggroRange ?? 9.0) ** 2
+        const attack2 = (target.attackRange ?? 2.2) ** 2
         const forceAggro = (data.forceAggroUntil ?? 0) > now
 
         if (forceAggro || d2p <= aggro2) {
@@ -69,8 +81,7 @@ export default class DungeonEnemySystem {
             data.state = 'chase'
             enemy.playWalk?.() || enemy.playAnimation?.('Walk')
             const speed = (enemy.isBoss ? 1.55 : 1.35) * dt
-            enemy.group.position.x += nx * speed
-            enemy.group.position.z += nz * speed
+            this.moveWithCollision(enemy, { dx: nx * speed, dz: nz * speed })
           }
           else {
             data.state = 'attack'
@@ -78,9 +89,18 @@ export default class DungeonEnemySystem {
           }
 
           const hit = enemy.consumeAttackHit?.({ now })
-          if (hit && world.player?.takeDamage) {
+          if (hit) {
             const source = new THREE.Vector3(enemy.group.position.x, enemy.group.position.y, enemy.group.position.z)
-            world.player.takeDamage({ amount: hit.damage, canBeBlocked: true, sourcePosition: source })
+            if (target.type === 'ally' && target.entity?.takeDamage) {
+              target.entity.takeDamage(hit.damage)
+              if (target.entity.isDead) {
+                world._spawnDungeonItemDrop?.({ itemId: target.entity._summonedFromCanisterId || 'canister_small', amount: 1, x: target.entity.group.position.x, z: target.entity.group.position.z, canisterMeta: target.entity._summonedFromCanisterMeta || null })
+                world._despawnSummonedAlly?.(target.entity)
+              }
+            }
+            else if (target.type === 'player' && world.player?.takeDamage) {
+              world.player.takeDamage({ amount: hit.damage, canBeBlocked: true, sourcePosition: source })
+            }
           }
 
           const pos = enemy.group.position
@@ -88,6 +108,7 @@ export default class DungeonEnemySystem {
           enemy.group.position.y += (groundY - enemy.group.position.y) * 0.18
           if (world.currentWorld === 'dungeon' && Number.isFinite(Number(world._dungeonSurfaceY)))
             enemy.group.position.y = Number(world._dungeonSurfaceY)
+          this.resolveIfInsideSolid(enemy)
           continue
         }
       }
@@ -111,7 +132,13 @@ export default class DungeonEnemySystem {
 
       if (data.state === 'walk') {
         const speed = 1.2 * dt
-        enemy.group.translateZ(speed)
+        const dir = new THREE.Vector3()
+        enemy.group.getWorldDirection(dir)
+        dir.y = 0
+        if (dir.lengthSq() > 1e-6) {
+          dir.normalize()
+          this.moveWithCollision(enemy, { dx: dir.x * speed, dz: dir.z * speed })
+        }
 
         const pos = enemy.group.position
         const dx = pos.x - data.home.x
@@ -128,6 +155,189 @@ export default class DungeonEnemySystem {
         enemy.group.position.y += (groundY - enemy.group.position.y) * 0.15
         if (world.currentWorld === 'dungeon' && Number.isFinite(Number(world._dungeonSurfaceY)))
           enemy.group.position.y = Number(world._dungeonSurfaceY)
+        this.resolveIfInsideSolid(enemy)
+      }
+    }
+  }
+
+  pickTargetForEnemy({ enemy, playerPos, playerDead, allies, now }) {
+    const data = enemy?.behavior
+    const forceAggro = (data?.forceAggroUntil ?? 0) > now
+    const aggroRange = 9.0
+    const attackRange = enemy?.isBoss ? 2.35 : 2.1
+
+    if (!playerDead) {
+      let best = null
+      let bestD2 = Number.POSITIVE_INFINITY
+      const ex = enemy.group.position.x
+      const ez = enemy.group.position.z
+      for (const ally of allies) {
+        if (!ally?.group || ally.isDead)
+          continue
+        const dx = ally.group.position.x - ex
+        const dz = ally.group.position.z - ez
+        const d2 = dx * dx + dz * dz
+        if (d2 < bestD2) {
+          bestD2 = d2
+          best = ally
+        }
+      }
+      if (best && (forceAggro || bestD2 <= aggroRange * aggroRange))
+        return { type: 'ally', entity: best, pos: best.group.position, aggroRange, attackRange }
+      return { type: 'player', entity: null, pos: playerPos, aggroRange, attackRange }
+    }
+
+    let best = null
+    let bestD2 = Number.POSITIVE_INFINITY
+    const ex = enemy.group.position.x
+    const ez = enemy.group.position.z
+    for (const ally of allies) {
+      if (!ally?.group || ally.isDead)
+        continue
+      const dx = ally.group.position.x - ex
+      const dz = ally.group.position.z - ez
+      const d2 = dx * dx + dz * dz
+      if (d2 < bestD2) {
+        bestD2 = d2
+        best = ally
+      }
+    }
+    if (best)
+      return { type: 'ally', entity: best, pos: best.group.position, aggroRange, attackRange }
+    return null
+  }
+
+  updateSummonedAllies({ dt, now, playerPos }) {
+    const world = this.world
+    const allies = Array.isArray(world._summonedAllies) ? world._summonedAllies : []
+    const enemies = Array.isArray(world._dungeonEnemies) ? world._dungeonEnemies : []
+    for (const ally of allies) {
+      ally?.update?.()
+      if (!ally?.group || ally.isDead)
+        continue
+      const ax = ally.group.position.x
+      const az = ally.group.position.z
+
+      let bestEnemy = null
+      let bestD2 = Number.POSITIVE_INFINITY
+      for (const e of enemies) {
+        if (!e?.group || e.isDead)
+          continue
+        const dx = e.group.position.x - ax
+        const dz = e.group.position.z - az
+        const d2 = dx * dx + dz * dz
+        if (d2 < bestD2) {
+          bestD2 = d2
+          bestEnemy = e
+        }
+      }
+
+      const targetPos = bestEnemy?.group?.position || playerPos
+      if (!targetPos)
+        continue
+
+      const dxp = targetPos.x - ax
+      const dzp = targetPos.z - az
+      const d2p = dxp * dxp + dzp * dzp
+      const attack2 = 2.2 * 2.2
+      const len = Math.hypot(dxp, dzp)
+      const nx = len > 0.0001 ? (dxp / len) : 0
+      const nz = len > 0.0001 ? (dzp / len) : 1
+      const facing = Math.atan2(dxp, dzp)
+      ally.group.rotation.y = facing
+
+      if (bestEnemy && d2p <= attack2) {
+        ally.tryAttack?.({ now, damage: 1, range: 2.1, windupMs: 260 })
+        const hit = ally.consumeAttackHit?.({ now })
+        if (hit && bestEnemy?.takeDamage) {
+          bestEnemy.takeDamage(hit.damage)
+        }
+      }
+      else {
+        const speed = 1.25 * dt
+        this.moveWithCollision(ally, { dx: nx * speed, dz: nz * speed })
+      }
+
+      const pos = ally.group.position
+      const groundY = world._getSurfaceY(pos.x, pos.z)
+      ally.group.position.y += (groundY - ally.group.position.y) * 0.18
+      if (world.currentWorld === 'dungeon' && Number.isFinite(Number(world._dungeonSurfaceY)))
+        ally.group.position.y = Number(world._dungeonSurfaceY)
+      this.resolveIfInsideSolid(ally)
+    }
+  }
+
+  moveWithCollision(entity, { dx = 0, dz = 0 } = {}) {
+    const world = this.world
+    if (!world?.chunkManager || !entity?.group)
+      return
+    if (Math.abs(dx) < 1e-6 && Math.abs(dz) < 1e-6)
+      return
+
+    const pos = entity.group.position
+    const nextX = pos.x + dx
+    const nextZ = pos.z + dz
+    if (this.canOccupyAt(nextX, nextZ, pos.y)) {
+      pos.x = nextX
+      pos.z = nextZ
+      return
+    }
+
+    if (this.canOccupyAt(nextX, pos.z, pos.y)) {
+      pos.x = nextX
+      return
+    }
+
+    if (this.canOccupyAt(pos.x, nextZ, pos.y)) {
+      pos.z = nextZ
+    }
+  }
+
+  canOccupyAt(x, z, y) {
+    const world = this.world
+    const cm = world?.chunkManager
+    if (!cm?.getBlockWorld)
+      return true
+    const emptyId = blocks.empty.id
+    const ix = Math.floor(x)
+    const iz = Math.floor(z)
+    const baseY = Math.floor(Number.isFinite(Number(y)) ? y : 0)
+    for (let dy = 0; dy <= 2; dy++) {
+      const b = cm.getBlockWorld(ix, baseY + dy, iz)
+      if (b?.id && b.id !== emptyId)
+        return false
+    }
+    return true
+  }
+
+  resolveIfInsideSolid(entity) {
+    const world = this.world
+    const cm = world?.chunkManager
+    if (!cm?.getBlockWorld || !entity?.group)
+      return
+    const emptyId = blocks.empty.id
+    const pos = entity.group.position
+    const ix = Math.floor(pos.x)
+    const iz = Math.floor(pos.z)
+    const baseY = Math.floor(pos.y)
+    const b = cm.getBlockWorld(ix, baseY, iz)
+    if (!b?.id || b.id === emptyId)
+      return
+
+    for (let r = 1; r <= 12; r++) {
+      for (let dx = -r; dx <= r; dx++) {
+        for (let dz = -r; dz <= r; dz++) {
+          if (Math.abs(dx) !== r && Math.abs(dz) !== r)
+            continue
+          const nx = ix + dx
+          const nz = iz + dz
+          const nb = cm.getBlockWorld(nx, baseY, nz)
+          if (!nb?.id || nb.id === emptyId) {
+            pos.x = nx + 0.5
+            pos.z = nz + 0.5
+            return
+          }
+        }
       }
     }
   }

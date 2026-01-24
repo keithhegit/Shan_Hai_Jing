@@ -45,6 +45,7 @@ export default class DropSystem {
     world._hubDropsGroup.add(mesh)
     const persist = !!options?.persist
     const onPickedUp = typeof options?.onPickedUp === 'function' ? options.onPickedUp : null
+    const canisterMeta = options?.canisterMeta && typeof options.canisterMeta === 'object' ? options.canisterMeta : null
     const title = world._getModelFilenameByResourceKey?.(itemId) || itemId
     world._hubDrops.push({
       id,
@@ -60,6 +61,7 @@ export default class DropSystem {
       hint: '按 E 拾取',
       spinSpeed: 0,
       isHubDrop: true,
+      canisterMeta,
       persist,
       onPickedUp,
     })
@@ -151,7 +153,7 @@ export default class DropSystem {
     return best
   }
 
-  pickupItemToInventory({ itemId, count, allowWarehouseFallback = false } = {}) {
+  pickupItemToInventory({ itemId, count, allowWarehouseFallback = false, canisterMeta = null } = {}) {
     const world = this.world
     if (!world || !itemId)
       return false
@@ -160,6 +162,8 @@ export default class DropSystem {
 
     if (world._canAddToBackpack(itemId, n)) {
       world._addInventoryItem('backpack', itemId, n)
+      if (String(itemId).startsWith('canister_') && canisterMeta)
+        world.inventorySystem?.recordCanisterMeta?.(itemId, canisterMeta)
       emitter.emit('dungeon:toast', { text: `获得：${label} x${n}（已放入背包）` })
       world._scheduleInventorySave()
       world._emitInventorySummary()
@@ -177,6 +181,8 @@ export default class DropSystem {
     }
 
     world._addInventoryItem('warehouse', itemId, n)
+    if (String(itemId).startsWith('canister_') && canisterMeta)
+      world.inventorySystem?.recordCanisterMeta?.(itemId, canisterMeta)
     emitter.emit('dungeon:toast', { text: `背包已满或超重：${label} x${n}（已入库）` })
     world._scheduleInventorySave()
     world._emitInventorySummary()
@@ -193,13 +199,13 @@ export default class DropSystem {
       return false
     const itemId = removed.itemId || 'stone'
     const count = Math.max(1, Math.floor(Number(removed.count) || 1))
-    const ok = this.pickupItemToInventory({ itemId, count, allowWarehouseFallback: true })
+    const ok = this.pickupItemToInventory({ itemId, count, allowWarehouseFallback: true, canisterMeta: removed.canisterMeta || null })
     if (ok)
       removed.onPickedUp?.(removed)
     return ok
   }
 
-  spawnDungeonItemDrop({ itemId, amount = 1, x = null, z = null } = {}) {
+  spawnDungeonItemDrop({ itemId, amount = 1, x = null, z = null, canisterMeta = null } = {}) {
     const world = this.world
     if (!world || world.currentWorld !== 'dungeon')
       return
@@ -242,6 +248,7 @@ export default class DropSystem {
         hint: '按 E 拾取',
         pickupItemId: itemId,
         pickupAmount: perAmount,
+        canisterMeta: String(itemId).startsWith('canister_') && canisterMeta ? canisterMeta : null,
         x: jitterX,
         y,
         z: jitterZ,
