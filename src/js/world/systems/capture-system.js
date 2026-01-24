@@ -171,7 +171,7 @@ export default class CaptureSystem {
         target.isDead = true
         target._coinDropped = true
         if (target.isBoss)
-          world._dungeonRewardSpawned = true
+          world._spawnDungeonReward?.()
         if (target.group) {
           target.group.visible = false
           target.group.removeFromParent?.()

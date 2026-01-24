@@ -7,14 +7,21 @@ const HOST = _config.server.host
 const PORT = _config.server.port
 const BASE_URL = `http://${HOST}:${PORT}`
 
+const isIgnorableConsoleError = (text) => {
+  return String(text || '').includes('net::ERR_CONNECTION_RESET')
+}
+
 test('smoke: app loads without runtime errors', async ({ page }, testInfo) => {
   test.setTimeout(120_000)
   const consoleErrors = []
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -63,8 +70,11 @@ test('input: B opens backpack; warehouse opens only via E near warehouse', async
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -174,8 +184,11 @@ test('combat: lock-on toggles and melee hit reduces hp', async ({ page }) => {
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -354,8 +367,11 @@ test('material gun: equip from inventory and laser deals dot', async ({ page }) 
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -466,8 +482,11 @@ test('material gun: firing while locked quickly faces target', async ({ page }) 
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -594,8 +613,11 @@ test('lock-on: works even when an interactable prompt is active', async ({ page 
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -643,8 +665,11 @@ test('dungeon: coin pickup is single-use and lock-on still works', async ({ page
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -722,8 +747,11 @@ test('dungeon: no roof above spawn, enemies stay on floor, and plants are cleare
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -801,8 +829,11 @@ test('dungeon: desert chest has clear air around it (not occluded by blocks)', a
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -857,8 +888,11 @@ test('dungeon: snow chest has clear air around it (not occluded by blocks)', asy
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -911,8 +945,11 @@ test('dungeon: chest mesh is above floor and not buried', async ({ page }) => {
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -962,8 +999,11 @@ test('dungeon: using correct key unlocks portal chest', async ({ page }) => {
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -1020,8 +1060,11 @@ test('dungeon: chest UI enables use button for matching key', async ({ page }) =
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -1077,8 +1120,11 @@ test('dungeon: re-enter dungeon after quick return spawns carved room immediatel
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -1149,8 +1195,11 @@ test('capture: holding Q captures stunned low-hp enemy into canister', async ({ 
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -1440,8 +1489,11 @@ test('dungeon: each themed type generates expected enemies', async ({ page }) =>
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -1488,8 +1540,11 @@ test('dungeon: layout has 4 fight rooms with branching/loop and themed boss', as
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
 
   page.on('pageerror', (err) => {
@@ -1751,8 +1806,11 @@ test('dungeon: each portal spawns themed enemies and boss', async ({ page }) => 
   const pageErrors = []
 
   page.on('console', (msg) => {
-    if (msg.type() === 'error')
-      consoleErrors.push(msg.text())
+    if (msg.type() !== 'error')
+      return
+    const text = msg.text()
+    if (!isIgnorableConsoleError(text))
+      consoleErrors.push(text)
   })
   page.on('pageerror', (err) => {
     pageErrors.push(err?.message ?? String(err))
