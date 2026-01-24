@@ -305,11 +305,19 @@ export default class HumanoidEnemy {
   }
 
   playLocomotion() {
-    return this.playAnimation('Walk') || this.playAnimation('Run') || this.playAnimation('Move')
+    const ok = this.playAnimation('Walk') || this.playAnimation('Run') || this.playAnimation('Move')
+    if (ok)
+      return true
+    const clip = this._findActionByIncludes(['locomotion', 'walk', 'run', 'move', 'walk_', 'run_', 'walking', 'running'])
+    return clip ? this.playAnimation(clip) : false
   }
 
   playWalk() {
-    return this.playAnimation('Walk') || false
+    const ok = this.playAnimation('Walk')
+    if (ok)
+      return true
+    const clip = this._findActionByIncludes(['walk', 'walk_', 'walking'])
+    return clip ? this.playAnimation(clip) : false
   }
 
   update() {

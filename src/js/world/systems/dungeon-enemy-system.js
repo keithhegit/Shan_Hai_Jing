@@ -17,6 +17,19 @@ export default class DungeonEnemySystem {
   }
 
   update() {
+    const world = this.world
+    if (!world)
+      return
+    const allies = Array.isArray(world._summonedAllies) ? world._summonedAllies : []
+    if (allies.length > 0) {
+      const dt = world.experience.time.delta * 0.001
+      const now = world.experience.time?.elapsed ?? 0
+      const playerPos = world.player?.getPosition?.()
+      const enemies = world.currentWorld === 'dungeon'
+        ? (Array.isArray(world._dungeonEnemies) ? world._dungeonEnemies : [])
+        : []
+      this.updateSummonedAllies({ dt, now, playerPos, enemies })
+    }
     this.updateDungeonEnemies()
   }
 
@@ -30,9 +43,6 @@ export default class DungeonEnemySystem {
     const playerPos = world.player?.getPosition?.()
     const playerDead = !!world.player?.isDead
     const allies = Array.isArray(world._summonedAllies) ? world._summonedAllies : []
-
-    if (allies.length > 0)
-      this.updateSummonedAllies({ dt, now, playerPos })
 
     for (const enemy of world._dungeonEnemies) {
       enemy?.update?.()
@@ -207,10 +217,44 @@ export default class DungeonEnemySystem {
     return null
   }
 
-  updateSummonedAllies({ dt, now, playerPos }) {
+  updateSummonedAllies({ dt, now, playerPos, enemies }) {
     const world = this.world
     const allies = Array.isArray(world._summonedAllies) ? world._summonedAllies : []
-    const enemies = Array.isArray(world._dungeonEnemies) ? world._dungeonEnemies : []
+    const enemyList = Array.isArray(enemies) ? enemies : []
+    const followMin = 1.25
+    const followMax = 4.25
+    const followCatchUp = 7.0
+    const threatAggro = 9.0
+    const threatAggro2 = threatAggro * threatAggro
+    const threatStates = new Set(['chase', 'attack'])
+    const px = playerPos?.x ?? null
+    const pz = playerPos?.z ?? null
+    const hasPlayer = Number.isFinite(Number(px)) && Number.isFinite(Number(pz))
+
+    let primaryThreat = null
+    if (hasPlayer && enemyList.length > 0) {
+      let best = null
+      let bestD2 = Number.POSITIVE_INFINITY
+      for (const e of enemyList) {
+        if (!e?.group || e.isDead)
+          continue
+        const data = e.behavior
+        const forceAggro = (data?.forceAggroUntil ?? 0) > now
+        const stateThreat = threatStates.has(String(data?.state || ''))
+        const dx = e.group.position.x - px
+        const dz = e.group.position.z - pz
+        const d2 = dx * dx + dz * dz
+        const inAggro = d2 <= threatAggro2
+        if (!forceAggro && !stateThreat && !inAggro)
+          continue
+        if (d2 < bestD2) {
+          bestD2 = d2
+          best = e
+        }
+      }
+      primaryThreat = best
+    }
+
     for (const ally of allies) {
       ally?.update?.()
       if (!ally?.group || ally.isDead)
@@ -218,44 +262,74 @@ export default class DungeonEnemySystem {
       const ax = ally.group.position.x
       const az = ally.group.position.z
 
-      let bestEnemy = null
-      let bestD2 = Number.POSITIVE_INFINITY
-      for (const e of enemies) {
-        if (!e?.group || e.isDead)
-          continue
-        const dx = e.group.position.x - ax
-        const dz = e.group.position.z - az
-        const d2 = dx * dx + dz * dz
-        if (d2 < bestD2) {
-          bestD2 = d2
-          bestEnemy = e
+      const targetEnemy = primaryThreat
+      if (targetEnemy?.group) {
+        const targetPos = targetEnemy.group.position
+        const dxp = targetPos.x - ax
+        const dzp = targetPos.z - az
+        const d2p = dxp * dxp + dzp * dzp
+        const attack2 = 2.2 * 2.2
+        const len = Math.hypot(dxp, dzp)
+        const nx = len > 0.0001 ? (dxp / len) : 0
+        const nz = len > 0.0001 ? (dzp / len) : 1
+        const facing = Math.atan2(dxp, dzp)
+        ally.group.rotation.y = facing
+
+        if (d2p <= attack2) {
+          ally.behavior = ally.behavior || {}
+          ally.behavior.state = 'attack'
+          ally.tryAttack?.({ now, damage: 1, range: 2.1, windupMs: 260 })
+          const hit = ally.consumeAttackHit?.({ now })
+          if (hit && targetEnemy?.takeDamage) {
+            targetEnemy.takeDamage(hit.damage)
+          }
+        }
+        else {
+          ally.behavior = ally.behavior || {}
+          ally.behavior.state = 'walk'
+          ally.playLocomotion?.() || ally.playWalk?.() || ally.playAnimation?.('Walk')
+          const speed = 1.25 * dt
+          this.moveWithCollision(ally, { dx: nx * speed, dz: nz * speed })
         }
       }
-
-      const targetPos = bestEnemy?.group?.position || playerPos
-      if (!targetPos)
-        continue
-
-      const dxp = targetPos.x - ax
-      const dzp = targetPos.z - az
-      const d2p = dxp * dxp + dzp * dzp
-      const attack2 = 2.2 * 2.2
-      const len = Math.hypot(dxp, dzp)
-      const nx = len > 0.0001 ? (dxp / len) : 0
-      const nz = len > 0.0001 ? (dzp / len) : 1
-      const facing = Math.atan2(dxp, dzp)
-      ally.group.rotation.y = facing
-
-      if (bestEnemy && d2p <= attack2) {
-        ally.tryAttack?.({ now, damage: 1, range: 2.1, windupMs: 260 })
-        const hit = ally.consumeAttackHit?.({ now })
-        if (hit && bestEnemy?.takeDamage) {
-          bestEnemy.takeDamage(hit.damage)
+      else if (hasPlayer) {
+        const dxp = px - ax
+        const dzp = pz - az
+        const d2p = dxp * dxp + dzp * dzp
+        const len = Math.hypot(dxp, dzp)
+        const dist = len
+        if (dist > followCatchUp) {
+          const nx = len > 0.0001 ? (dxp / len) : 0
+          const nz = len > 0.0001 ? (dzp / len) : 1
+          const facing = Math.atan2(dxp, dzp)
+          ally.group.rotation.y = facing
+          ally.behavior = ally.behavior || {}
+          ally.behavior.state = 'walk'
+          ally.playLocomotion?.() || ally.playWalk?.() || ally.playAnimation?.('Walk')
+          const speed = 1.65 * dt
+          this.moveWithCollision(ally, { dx: nx * speed, dz: nz * speed })
         }
-      }
-      else {
-        const speed = 1.25 * dt
-        this.moveWithCollision(ally, { dx: nx * speed, dz: nz * speed })
+        else if (dist > followMax) {
+          const nx = len > 0.0001 ? (dxp / len) : 0
+          const nz = len > 0.0001 ? (dzp / len) : 1
+          const facing = Math.atan2(dxp, dzp)
+          ally.group.rotation.y = facing
+          ally.behavior = ally.behavior || {}
+          ally.behavior.state = 'walk'
+          ally.playLocomotion?.() || ally.playWalk?.() || ally.playAnimation?.('Walk')
+          const speed = 1.25 * dt
+          this.moveWithCollision(ally, { dx: nx * speed, dz: nz * speed })
+        }
+        else if (dist < followMin) {
+          ally.behavior = ally.behavior || {}
+          ally.behavior.state = 'idle'
+          ally.playAnimation?.('Idle')
+        }
+        else {
+          ally.behavior = ally.behavior || {}
+          ally.behavior.state = 'idle'
+          ally.playAnimation?.('Idle')
+        }
       }
 
       const pos = ally.group.position
@@ -275,37 +349,54 @@ export default class DungeonEnemySystem {
       return
 
     const pos = entity.group.position
+    const r = Math.min(0.9, Math.max(0.35, (Number(entity.hitRadius) || 0.9) * 0.55))
     const nextX = pos.x + dx
     const nextZ = pos.z + dz
-    if (this.canOccupyAt(nextX, nextZ, pos.y)) {
+    if (this.canOccupyAt(nextX, nextZ, pos.y, r)) {
       pos.x = nextX
       pos.z = nextZ
       return
     }
 
-    if (this.canOccupyAt(nextX, pos.z, pos.y)) {
+    if (this.canOccupyAt(nextX, pos.z, pos.y, r)) {
       pos.x = nextX
       return
     }
 
-    if (this.canOccupyAt(pos.x, nextZ, pos.y)) {
+    if (this.canOccupyAt(pos.x, nextZ, pos.y, r)) {
       pos.z = nextZ
     }
   }
 
-  canOccupyAt(x, z, y) {
+  canOccupyAt(x, z, y, radius = 0.45) {
     const world = this.world
     const cm = world?.chunkManager
     if (!cm?.getBlockWorld)
       return true
     const emptyId = blocks.empty.id
-    const ix = Math.floor(x)
-    const iz = Math.floor(z)
-    const baseY = Math.floor(Number.isFinite(Number(y)) ? y : 0)
-    for (let dy = 0; dy <= 2; dy++) {
-      const b = cm.getBlockWorld(ix, baseY + dy, iz)
-      if (b?.id && b.id !== emptyId)
-        return false
+    const r = Math.max(0, Number(radius) || 0)
+    const samples = r > 0.01
+      ? [
+          { x, z },
+          { x: x + r, z },
+          { x: x - r, z },
+          { x, z: z + r },
+          { x, z: z - r },
+          { x: x + r, z: z + r },
+          { x: x + r, z: z - r },
+          { x: x - r, z: z + r },
+          { x: x - r, z: z - r },
+        ]
+      : [{ x, z }]
+    const baseY = Math.floor(Number.isFinite(Number(y)) ? y : 0) + 1
+    for (const s of samples) {
+      const ix = Math.floor(s.x)
+      const iz = Math.floor(s.z)
+      for (let dy = 0; dy <= 2; dy++) {
+        const b = cm.getBlockWorld(ix, baseY + dy, iz)
+        if (b?.id && b.id !== emptyId)
+          return false
+      }
     }
     return true
   }
@@ -315,13 +406,9 @@ export default class DungeonEnemySystem {
     const cm = world?.chunkManager
     if (!cm?.getBlockWorld || !entity?.group)
       return
-    const emptyId = blocks.empty.id
     const pos = entity.group.position
-    const ix = Math.floor(pos.x)
-    const iz = Math.floor(pos.z)
-    const baseY = Math.floor(pos.y)
-    const b = cm.getBlockWorld(ix, baseY, iz)
-    if (!b?.id || b.id === emptyId)
+    const hitRadius = Math.min(0.9, Math.max(0.35, (Number(entity.hitRadius) || 0.9) * 0.55))
+    if (this.canOccupyAt(pos.x, pos.z, pos.y, hitRadius))
       return
 
     for (let r = 1; r <= 12; r++) {
@@ -329,12 +416,13 @@ export default class DungeonEnemySystem {
         for (let dz = -r; dz <= r; dz++) {
           if (Math.abs(dx) !== r && Math.abs(dz) !== r)
             continue
-          const nx = ix + dx
-          const nz = iz + dz
-          const nb = cm.getBlockWorld(nx, baseY, nz)
-          if (!nb?.id || nb.id === emptyId) {
-            pos.x = nx + 0.5
-            pos.z = nz + 0.5
+          const nx = Math.floor(pos.x) + dx
+          const nz = Math.floor(pos.z) + dz
+          const px = nx + 0.5
+          const pz = nz + 0.5
+          if (this.canOccupyAt(px, pz, pos.y, hitRadius)) {
+            pos.x = px
+            pos.z = pz
             return
           }
         }

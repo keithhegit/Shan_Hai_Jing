@@ -1267,7 +1267,11 @@ export default class World {
     const group = this._ensureSummonedAlliesGroup()
     const y = this._getSurfaceY?.(position?.x ?? 0, position?.z ?? 0) ?? (position?.y ?? 0)
     const spawn = new THREE.Vector3(position?.x ?? 0, y, position?.z ?? 0)
-    const ally = new HumanoidEnemy({ type: key, position: spawn })
+    const kind = String(capturedKind || '').toLowerCase()
+    const isBoss = kind === 'boss' || String(canisterItemId || '') === 'canister_large'
+    const isAnimal = key.startsWith('animal_')
+    const scale = isBoss ? 0.7 : (key === 'animal_horse' ? 0.25 : (isAnimal ? 0.5 : 0.5))
+    const ally = new HumanoidEnemy({ type: key, position: spawn, scale })
     ally._resourceKey = key
     ally._typeLabel = displayName || (this._getModelFilenameByResourceKey?.(key) || key)
     ally._isSummonedAlly = true

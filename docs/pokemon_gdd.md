@@ -193,9 +193,9 @@
 
 | 类型 | 主键/标识列 | 数值管理列（建议最小集） | 捕捉/产出列（如适用） | 背包格子（w×h） | Icon_img | Icon_px 建议 |
 | --- | --- | --- | --- | --- | --- | --- |
-| NPC（可捕捉） | `npcId` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_small`） | 捕捉产物：2×2 | `img/icons/canister_small.png` | 128×128 |
+| NPC（可捕捉） | `npcId` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_small`） | 捕捉产物：1×2 | `img/icons/canister_small.png` | 64×128 |
 | Minion（可捕捉） | `enemyId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius` | `captureCanisterId`（默认 `canister_medium`） | 捕捉产物：2×2 | `img/icons/canister_medium.png` | 128×128 |
-| Boss（可捕捉） | `bossId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`, `phase`（可选） | `captureCanisterId`（默认 `canister_large`） | 捕捉产物：4×4 | `img/icons/canister_large.png` | 256×256 |
+| Boss（可捕捉） | `bossId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`, `phase`（可选） | `captureCanisterId`（默认 `canister_large`） | 捕捉产物：3×3 | `img/icons/canister_large.png` | 192×192 |
 | 其他道具（Item） | `itemId` / `resourceKey` | `type`, `stackable`, `maxStack`（可选）, `weight`, `rarity`（可选） | `dropRate` / `lootTableId`（可选） | 例：`material_gun` 2×4 | `img/icons/{itemId}.png` | 2×4 → 128×256；1×1 → 64×64；1×2 → 64×128 |
 | 消耗品（Consumable） | `itemId` / `resourceKey` | `stackable`, `maxStack`, `cooldownMs`（可选）, `useEffectId` / `effectValue` | `useConsumes`（是否消耗） | 建议 1×1 或 1×2 | `img/icons/{itemId}.png` | 1×1 → 64×64；1×2 → 64×128 |
 
@@ -271,9 +271,9 @@ Dungeon 捕捉产出规则（当前实现）：
 | `key_snow` | 钥匙 | Stack | 1×2 | `img/icons/key_snow.png` | 64×128 |
 | `key_desert` | 钥匙 | Stack | 1×2 | `img/icons/key_desert.png` | 64×128 |
 | `key_forest` | 钥匙 | Stack | 1×2 | `img/icons/key_forest.png` | 64×128 |
-| `canister_small` | 灵兽罐（小） | Instance | 2×2 | `img/icons/canister_small.png` | 128×128 |
+| `canister_small` | 灵兽罐（小） | Instance | 1×2 | `img/icons/canister_small.png` | 64×128 |
 | `canister_medium` | 灵兽罐（中） | Instance | 2×2 | `img/icons/canister_medium.png` | 128×128 |
-| `canister_large` | 灵兽罐（大/Boss） | Instance | 4×4 | `img/icons/canister_large.png` | 256×256 |
+| `canister_large` | 灵兽罐（大/Boss） | Instance | 3×3 | `img/icons/canister_large.png` | 192×192 |
 | `Axe_Wood` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Wood.png` | 128×256 |
 | `Axe_Stone` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Stone.png` | 128×256 |
 | `Axe_Gold` | 工具/武器 | Instance | 2×4 | `img/icons/Axe_Gold.png` | 128×256 |
@@ -385,9 +385,9 @@ Dungeon 捕捉产出规则（当前实现）：
 
 | CanisterSize | 来源 | 背包占用（Grid） | 负重惩罚            | 视觉挂载（Visuals） |
 | ------------ | ---- | ---------------: | ------------------- | ------------------- |
-| Small        | 杂兵 |              2x2 | 无                  | 腰带后方            |
+| Small        | 杂兵 |              1x2 | 无                  | 腰带后方            |
 | Medium       | 精英 |              2x2 | 移速 -10%           | 背包侧面挂载        |
-| Large        | Boss |              4x4 | 移速 -25%（禁冲刺） | 背部高亮挂载        |
+| Large        | Boss |              3x3 | 移速 -25%（禁冲刺） | 背部高亮挂载        |
 
 本节实现依赖项（当前缺失）：
 
@@ -414,6 +414,16 @@ Dungeon 捕捉产出规则（当前实现）：
 堆叠规则（意图）：
 
 - 若已有 Canister，新 Canister 沿玩家背向（局部 Z）向外偏移，形成“叠罗汉”效果
+
+### 8.4 灵兽出战（跟随 + 护主）
+
+目标：让“收容罐投掷出战”的灵兽更贴近 MMORPG 宠物的默认行为：非战斗时跟随主控；当主控受到威胁时主动参战。
+
+行为规则（最小口径）：
+
+- 非战斗：灵兽维持在主控附近的跟随距离带内（太远会加速追上；太近会停下）
+- 触发参战（“主控受威胁”）：地牢内存在会追击/攻击主控的敌人，或敌人进入主控周围的仇恨范围时，灵兽选择一个目标并冲上去近战
+- 退出战斗：当附近没有威胁目标时，灵兽回到跟随状态
 
 ## 9. UI/UX：沉浸式设计（Diegetic Interface）
 
@@ -489,8 +499,9 @@ Dungeon 捕捉产出规则（当前实现）：
 | 钥匙            | `key_plains` 等                                |            1×2 |      是      | 若保持 Stack，则网格代表格 1×2；若改 Instance，则每把钥匙单独占格 |
 | 武器（主手）    | `material_gun`                                 |            2×4 |      是      | 你的设想：视觉上更像“长物件”                                      |
 | 工具/武器掉落   | `Sword_*` / `Axe_*` / `Pickaxe_*` / `Shovel_*` |            2×4 |      是      | 第一版统一 2×4，后续再区分长短                                    |
-| 灵兽罐（常规）  | `canister_small` / `canister_medium`           |            2×2 |      是      | 把“抓到一只怪”的空间压力做得更明显                                |
-| Boss 罐（超大） | `canister_large`（或新增 `canister_boss`）     |            4×4 |      否      | 推荐不允许旋转（减少“摆法花活”带来的学习成本）                    |
+| 灵兽罐（小）    | `canister_small`                               |            1×2 |      是      | 作为“轻量战利品”，给背包带来轻压力                                |
+| 灵兽罐（中）    | `canister_medium`                              |            2×2 |      是      | 把“抓到一只怪”的空间压力做得更明显                                |
+| Boss 罐（大）   | `canister_large`                               |            3×3 |      否      | 不允许旋转，减少“摆法花活”带来的学习成本                          |
 
 你后续如果要增加“稀有武器更长/更大”的表达，只需要在这张表里改一行，不需要改 UI。
 

@@ -1298,12 +1298,12 @@ test('inventory: grid sizes apply to weapons, keys, and boss canister', async ({
 
   expect(result.sizes.material_gun).toEqual({ w: 2, h: 4 })
   expect(result.sizes.key_plains).toEqual({ w: 1, h: 2 })
-  expect(result.sizes.canister_large).toEqual({ w: 4, h: 4 })
+  expect(result.sizes.canister_large).toEqual({ w: 3, h: 3 })
   expect(result.sizes.Sword_Wood).toEqual({ w: 2, h: 4 })
 
   expect(result.materialGun).toEqual({ w: 2, h: 4 })
   expect(result.key).toEqual({ w: 1, h: 2 })
-  expect(result.bossCanister).toEqual({ w: 4, h: 4 })
+  expect(result.bossCanister).toEqual({ w: 3, h: 3 })
   expect(result.sword).toEqual({ w: 2, h: 4 })
 })
 
