@@ -1634,16 +1634,16 @@ export default class World {
     this._interactablesGroup = new THREE.Group()
     this.scene.add(this._interactablesGroup)
 
-    const centerX = Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
-    const centerZ = Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
+    const centerX = this._hubCenter?.x ?? Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
+    const centerZ = this._hubCenter?.z ?? Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
 
     const items = [
       {
         id: 'warehouse',
         title: '仓库',
         description: '存放与取出物品。',
-        x: centerX - 4,
-        z: centerZ + 4,
+        x: centerX + 12,
+        z: centerZ + 3,
         hint: '按 E 打开仓库',
         openInventoryPanel: 'warehouse',
       },
@@ -1653,7 +1653,7 @@ export default class World {
       let mesh
       if (item.id === 'warehouse' && this.resources.items.chest_open) {
         mesh = this.resources.items.chest_open.scene.clone()
-        mesh.scale.set(0.5, 0.5, 0.5)
+        mesh.scale.set(1, 1, 1)
       }
       else if (this.resources.items.chest_closed) {
         mesh = this.resources.items.chest_closed.scene.clone()
@@ -1746,16 +1746,6 @@ export default class World {
     }
 
     this._hubColliders = []
-
-    const quarryMesh = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(1.35, 0),
-      new THREE.MeshStandardMaterial({ color: 0x6B6B6B, roughness: 0.95, metalness: 0.0 }),
-    )
-    quarryMesh.position.set(quarryX, quarryY + 1.2, quarryZ)
-    quarryMesh.castShadow = true
-    quarryMesh.receiveShadow = true
-    this._hubAutomationGroup.add(quarryMesh)
-    this._hubColliders.push({ mesh: quarryMesh, hitRadius: this._getHitRadiusFromObject(quarryMesh, 1.3) })
 
     let boxMesh
     const resource = this.resources.items.chest_closed

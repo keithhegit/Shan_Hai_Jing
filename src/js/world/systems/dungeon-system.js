@@ -194,12 +194,6 @@ export default class DungeonSystem {
       z: exit.z,
       range: 3,
     }
-    if (portal.id === 'mine') {
-      exitGroup.position.set(spawn.x, spawn.y, spawn.z)
-      world._dungeonExit.x = spawn.x
-      world._dungeonExit.z = spawn.z
-      world._dungeonExit.range = 3.5
-    }
 
     world.currentWorld = 'dungeon'
     world._activeInteractableId = null
