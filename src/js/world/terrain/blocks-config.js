@@ -100,6 +100,7 @@ export const blocks = {
     id: BLOCK_IDS.GRASS,
     name: 'grass',
     visible: true,
+    modelKey: 'cube_grass',
     textureKeys: {
       top: 'grass',
       bottom: 'dirt',
@@ -110,6 +111,7 @@ export const blocks = {
     id: BLOCK_IDS.DIRT,
     name: 'dirt',
     visible: true,
+    modelKey: 'cube_dirt',
     textureKeys: {
       all: 'dirt',
     },
@@ -118,6 +120,7 @@ export const blocks = {
     id: BLOCK_IDS.STONE,
     name: 'stone',
     visible: true,
+    modelKey: 'cube_stone',
     textureKeys: {
       all: 'stone',
     },
@@ -128,6 +131,7 @@ export const blocks = {
     id: BLOCK_IDS.COAL_ORE,
     name: 'coal_ore',
     visible: true,
+    modelKey: 'cube_coal',
     textureKeys: {
       all: 'coal_ore',
     },
@@ -149,6 +153,8 @@ export const blocks = {
     id: BLOCK_IDS.TREE_TRUNK,
     name: 'tree_trunk',
     visible: true,
+    modelKey: 'cube_wood',
+    modelTint: 0xC49A6C,
     // 树干：六面贴图（侧面/顶面）
     textureKeys: {
       top: 'treeTrunk_TopTexture',
@@ -160,6 +166,8 @@ export const blocks = {
     id: BLOCK_IDS.TREE_LEAVES,
     name: 'tree_leaves',
     visible: true,
+    modelKey: 'cube_leaves',
+    modelTint: 0x6AAE5A,
     // 树叶：使用 alphaTest 构建镂空效果
     textureKeys: {
       all: 'treeLeaves_Texture',
@@ -176,6 +184,8 @@ export const blocks = {
     id: BLOCK_IDS.SAND,
     name: 'sand',
     visible: true,
+    modelKey: 'cube_dirt',
+    modelTint: 0xE2C982,
     textureKeys: {
       all: 'sand', // 对应 sources.js 中的 'sand' 纹理
     },
@@ -185,6 +195,8 @@ export const blocks = {
     id: BLOCK_IDS.BIRCH_TRUNK,
     name: 'birch_trunk',
     visible: true,
+    modelKey: 'cube_wood',
+    modelTint: 0xE6D7B0,
     textureKeys: {
       top: 'birchTrunk_TopTexture',
       bottom: 'birchTrunk_TopTexture',
@@ -195,6 +207,8 @@ export const blocks = {
     id: BLOCK_IDS.BIRCH_LEAVES,
     name: 'birch_leaves',
     visible: true,
+    modelKey: 'cube_leaves',
+    modelTint: 0x7EC46E,
     textureKeys: {
       all: 'birchLeaves_Texture',
     },
@@ -210,6 +224,8 @@ export const blocks = {
     id: BLOCK_IDS.CHERRY_TRUNK,
     name: 'cherry_trunk',
     visible: true,
+    modelKey: 'cube_wood',
+    modelTint: 0xC998A7,
     textureKeys: {
       top: 'cherryTrunk_TopTexture',
       bottom: 'cherryTrunk_TopTexture',
@@ -220,6 +236,8 @@ export const blocks = {
     id: BLOCK_IDS.CHERRY_LEAVES,
     name: 'cherry_leaves',
     visible: true,
+    modelKey: 'cube_leaves',
+    modelTint: 0xD785B6,
     textureKeys: {
       all: 'cherryLeaves_Texture',
     },
@@ -246,6 +264,8 @@ export const blocks = {
     id: BLOCK_IDS.TERRACOTTA,
     name: 'terracotta',
     visible: true,
+    modelKey: 'cube_bricks_yellow',
+    modelTint: 0xD4A64B,
     // 使用黄色陶瓦作为默认纹理，后续可根据需要扩展为随机选择
     textureKeys: {
       all: 'terracotta_yellow',
@@ -255,6 +275,8 @@ export const blocks = {
     id: BLOCK_IDS.RED_SAND,
     name: 'red_sand',
     visible: true,
+    modelKey: 'cube_dirt',
+    modelTint: 0xB0613F,
     textureKeys: {
       all: 'red_sand',
     },
@@ -264,6 +286,8 @@ export const blocks = {
     id: BLOCK_IDS.ICE,
     name: 'ice',
     visible: true,
+    modelKey: 'cube_ice',
+    modelTint: 0xB7E7FF,
     textureKeys: {
       all: 'ice_Texture',
     },
@@ -272,6 +296,8 @@ export const blocks = {
     id: BLOCK_IDS.PACKED_ICE,
     name: 'packed_ice',
     visible: true,
+    modelKey: 'cube_ice',
+    modelTint: 0x9FD8FF,
     textureKeys: {
       all: 'packedIce_Texture',
     },
@@ -280,6 +306,7 @@ export const blocks = {
     id: BLOCK_IDS.SNOW,
     name: 'snow',
     visible: true,
+    modelKey: 'cube_snow',
     textureKeys: {
       all: 'snow',
     },
@@ -289,6 +316,8 @@ export const blocks = {
     id: BLOCK_IDS.GRAVEL,
     name: 'gravel',
     visible: true,
+    modelKey: 'cube_stone',
+    modelTint: 0xA0A0A0,
     textureKeys: {
       all: 'gravel_Texture',
     },
@@ -301,6 +330,71 @@ export const resources = [
   blocks.coalOre,
   blocks.ironOre,
 ]
+
+export function getBlockModelAsset(blockType, resourceItems) {
+  const key = blockType?.modelKey ? String(blockType.modelKey) : ''
+  if (!key)
+    return null
+
+  const gltf = resourceItems?.[key]
+  if (!gltf?.scene)
+    return null
+
+  let mesh = null
+  gltf.scene.traverse((child) => {
+    if (mesh)
+      return
+    if (child?.isMesh)
+      mesh = child
+  })
+  if (!mesh?.geometry || !mesh?.material)
+    return null
+
+  const geometry = mesh.geometry.clone()
+  geometry.computeBoundingBox()
+  const box = geometry.boundingBox
+  if (box) {
+    const center = new THREE.Vector3()
+    box.getCenter(center)
+    geometry.translate(-center.x, -center.y, -center.z)
+  }
+  geometry.computeBoundingSphere()
+
+  const tint = blockType?.modelTint
+  const tintColor = (tint !== undefined && tint !== null) ? new THREE.Color(tint) : null
+
+  const applyOverrides = (mat) => {
+    if (!mat)
+      return
+    if (tintColor && mat.color) {
+      if (mat.map)
+        mat.color.multiply(tintColor)
+      else
+        mat.color.copy(tintColor)
+    }
+    if (blockType.alphaTest !== undefined)
+      mat.alphaTest = blockType.alphaTest
+    if (blockType.transparent !== undefined)
+      mat.transparent = blockType.transparent
+    if (blockType.side !== undefined)
+      mat.side = blockType.side
+    mat.needsUpdate = true
+  }
+
+  const material = Array.isArray(mesh.material)
+    ? mesh.material.map((m) => {
+        const next = m.clone()
+        applyOverrides(next)
+        return next
+      })
+    : (() => {
+        const next = mesh.material.clone()
+        applyOverrides(next)
+        return next
+      })()
+
+  return { geometry, material }
+}
 
 /**
  * 根据方块类型和资源纹理，生成材质（草方块返回 6 面材质数组）

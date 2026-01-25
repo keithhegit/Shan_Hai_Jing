@@ -6,7 +6,7 @@ import * as THREE from 'three'
 import { SHADOW_CONFIG, SHADOW_QUALITY, TREE_BLOCK_IDS } from '../../config/shadow-config.js'
 import Experience from '../../experience.js'
 import emitter from '../../utils/event-bus.js'
-import { ANIMATION_DEFAULTS, blocks, createMaterials, resources, sharedGeometry } from './blocks-config.js'
+import { ANIMATION_DEFAULTS, blocks, createMaterials, getBlockModelAsset, resources, sharedGeometry } from './blocks-config.js'
 import TerrainContainer from './terrain-container.js'
 
 // 将 id -> 配置映射缓存，避免每次遍历 Object.values
@@ -147,19 +147,22 @@ export default class TerrainRenderer {
       if (!blockType || !blockType.visible)
         return
 
-      const materials = createMaterials(blockType, this.resources.items)
+      const modelAsset = getBlockModelAsset(blockType, this.resources.items)
+      const materials = modelAsset ? modelAsset.material : createMaterials(blockType, this.resources.items)
       if (!materials)
         return
 
-      // 收集动画材质，供 update() 统一更新时间 uniform
-      const matArray = Array.isArray(materials) ? materials : [materials]
-      matArray.forEach((mat) => {
-        if (mat._isAnimated) {
-          this._animatedMaterials.push(mat)
-        }
-      })
+      if (!modelAsset) {
+        const matArray = Array.isArray(materials) ? materials : [materials]
+        matArray.forEach((mat) => {
+          if (mat._isAnimated) {
+            this._animatedMaterials.push(mat)
+          }
+        })
+      }
 
-      const mesh = new THREE.InstancedMesh(sharedGeometry, materials, positions.length)
+      const geometry = modelAsset?.geometry || sharedGeometry
+      const mesh = new THREE.InstancedMesh(geometry, materials, positions.length)
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)
 
       // castShadow is dynamically controlled by _applyShadowSettings based on quality

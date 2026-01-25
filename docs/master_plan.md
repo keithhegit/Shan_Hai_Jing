@@ -134,6 +134,33 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - 宝箱交互：钥匙激活成功后“随机道具弹出”，随后该宝箱消失（入口：`src/js/world/world.js`）
 - 地牢入口：Hub 仅保留一个入口交互点，并通过 Modal 菜单提供 5 个目的地（森林/平原/雪原/沙漠/矿山）（入口：`src/App.vue`、`src/js/world/world.js`、`src/components/StoryModal.vue` 或同类 Modal 组件）
 
+补充：灵宠/收容罐迭代（背包交互 + 战斗表现 + 经济闭环）
+
+- 背包图标：将 `public/img/icons/*.jpg` 作为背包条目图标来源的一部分（入口：`src/App.vue` 与背包网格渲染组件）
+- 收容罐交互：把 `canister_*` 做成“可装备”，装备后自动关闭背包并进入“抱起待投掷”状态（入口：`src/js/world/world.js`、`src/js/world/systems/inventory-system.js`、`src/App.vue`）
+- 抛物线预览：抱起状态下显示投掷抛物线与落点，随鼠标视角更新（入口：`src/js/world/world.js` 或独立 VFX/system）
+- 投掷眩晕：投掷命中敌人后，灵宠与被命中敌人均眩晕 3 秒，并在头顶显示眩晕 SVG 提示（入口：`src/js/world/enemies/humanoid-enemy.js`、`src/js/world/systems/dungeon-enemy-system.js`、相关 UI/label 系统）
+- 回收与精疲力竭：跟随灵宠靠近按 E 可收容回罐；“战败掉落→拾取回背包”的收容罐进入精疲力竭，装备时弹窗提示消耗 `1×coin` 充能（入口：`src/js/world/world.js`、`src/js/world/systems/interactable-system.js`、`src/App.vue`）
+- 传送跟随：玩家切换地牢/返回 Hub 时，已出战灵宠跟随主控一起传送（入口：`src/js/world/systems/dungeon-system.js`、`src/js/world/world.js`）
+
+补充：环境视觉替换（Terrain 方块 + Hub 树）
+
+- 方块模型：Terrain 方块渲染从默认 BoxGeometry/材质替换为 `public/models/cube/*.gltf`（入口：`src/js/world/terrain/blocks-config.js`、`src/js/world/terrain/terrain-renderer.js`、`src/js/sources.js`）
+- 方块模型策略：优先走 `blocks-config.modelKey` 对应的 gltf；缺失 modelKey/资源时回退到原贴图材质（避免一次性补齐全部模型资源）
+- 方块选型：按 Hub 与各地牢（平原/雪原/沙漠/森林/矿山）配置不同的块外观/颜色（可用“同模型不同 tint”的方式做差异）
+- 树模型：Hub 超平坦世界的树从体素树替换为 `public/models/Environment/Tree_1/2/3.gltf` 随机混用（入口：`src/js/world/terrain/terrain-generator.js`、`src/js/world/terrain/biome-config.js`、`src/js/sources.js`）
+- 树渲染策略：生成阶段产出 `treeModelData`（不再写 trunk/leaves 方块），渲染阶段按 chunk 用 InstancedMesh 批量渲染；生成地牢时会清理地牢包围盒内的树实例避免穿模
+- 性能约束：方块仍保持 InstancedMesh 批量渲染；树按“稀疏实例”生成并做 chunk 级别的创建/清理
+
+验收口径（最小）：
+
+- 背包里收容罐可 **装备 → 自动关闭背包 → 抱起 → 右键投掷**，且可见抛物线
+- 投掷命中后双方 3 秒眩晕（禁移动/禁攻击 + 头顶提示可见）
+- 跟随灵宠可 **E → 收容** 回背包；战败回罐需要 coin 充能才能再次投掷
+- 传送后灵宠仍跟随在主控附近，不留在旧世界
+- Hub 的树替换为 Tree_1/2/3 的随机混用，且不会生成体素树残留
+- Hub 与地牢的地面/墙体方块可见并有明显风格区分（不要求最终美术，但要稳定可读）
+
 ### 2.1.3 已确认口径（来自 2026-01-21 评审结论）
 
 这些口径用于减少“文档讨论 ↔ 代码实现”之间的反复确认。若后续要调整，以本节为准更新并同步到相关规格文档（`pokemon_gdd.md` 等）。

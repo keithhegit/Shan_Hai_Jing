@@ -7,7 +7,7 @@ const HOST = _config.server.host
 const PORT = _config.server.port
 const BASE_URL = `http://${HOST}:${PORT}`
 
-const isIgnorableConsoleError = (text) => {
+function isIgnorableConsoleError(text) {
   return String(text || '').includes('net::ERR_CONNECTION_RESET')
 }
 

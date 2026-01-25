@@ -11,6 +11,7 @@ import PlantRenderer from './plant-renderer.js'
 import TerrainContainer from './terrain-container.js'
 import TerrainGenerator from './terrain-generator.js'
 import TerrainRenderer from './terrain-renderer.js'
+import TreeModelRenderer from './tree-model-renderer.js'
 
 // 水面颜色（偏蓝绿色）
 const WATER_COLOR = 0x3399CC
@@ -123,6 +124,13 @@ export default class TerrainChunk {
     })
     this.plantRenderer.group.position.set(this.originX, 0, this.originZ)
     this.plantRenderer.group.scale.setScalar(sharedRenderParams?.scale ?? 1)
+
+    this.treeModelRenderer = new TreeModelRenderer(this.container, {
+      sharedParams: sharedRenderParams,
+      chunkName: `${this.chunkX}, ${this.chunkZ}`,
+    })
+    this.treeModelRenderer.group.position.set(this.originX, 0, this.originZ)
+    this.treeModelRenderer.group.scale.setScalar(sharedRenderParams?.scale ?? 1)
 
     // ===== 水面 mesh =====
     this.waterMesh = null
@@ -256,6 +264,7 @@ export default class TerrainChunk {
     this.renderer._rebuildFromContainer()
     // 构建植物 mesh
     this.plantRenderer.build(this.generator.plantData)
+    this.treeModelRenderer.build(this.generator.treeModelData)
     this.state = 'meshReady'
     return true
   }
@@ -286,6 +295,11 @@ export default class TerrainChunk {
     if (this.plantRenderer) {
       this.plantRenderer.dispose()
       this.plantRenderer = null
+    }
+
+    if (this.treeModelRenderer) {
+      this.treeModelRenderer.dispose()
+      this.treeModelRenderer = null
     }
 
     if (this.renderer) {

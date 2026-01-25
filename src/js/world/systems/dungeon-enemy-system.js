@@ -64,6 +64,18 @@ export default class DungeonEnemySystem {
       if (!data || !enemy?.group)
         continue
 
+      if (enemy.isStunned?.(now)) {
+        data.state = 'stun'
+        enemy.playStun?.()
+        const pos = enemy.group.position
+        const groundY = world._getSurfaceY(pos.x, pos.z)
+        enemy.group.position.y += (groundY - enemy.group.position.y) * 0.18
+        if (world.currentWorld === 'dungeon' && Number.isFinite(Number(world._dungeonSurfaceY)))
+          enemy.group.position.y = Number(world._dungeonSurfaceY)
+        this.resolveIfInsideSolid(enemy)
+        continue
+      }
+
       if (playerPos && !enemy.isDead) {
         const target = this.pickTargetForEnemy({ enemy, playerPos, playerDead, allies, now })
         const targetPos = target?.pos
@@ -104,7 +116,10 @@ export default class DungeonEnemySystem {
             if (target.type === 'ally' && target.entity?.takeDamage) {
               target.entity.takeDamage(hit.damage)
               if (target.entity.isDead) {
-                world._spawnDungeonItemDrop?.({ itemId: target.entity._summonedFromCanisterId || 'canister_small', amount: 1, x: target.entity.group.position.x, z: target.entity.group.position.z, canisterMeta: target.entity._summonedFromCanisterMeta || null })
+                const exhaustedMeta = target.entity._summonedFromCanisterMeta
+                  ? { ...target.entity._summonedFromCanisterMeta, exhausted: true }
+                  : { exhausted: true }
+                world._spawnDungeonItemDrop?.({ itemId: target.entity._summonedFromCanisterId || 'canister_small', amount: 1, x: target.entity.group.position.x, z: target.entity.group.position.z, canisterMeta: exhaustedMeta })
                 world._despawnSummonedAlly?.(target.entity)
               }
             }
@@ -262,6 +277,19 @@ export default class DungeonEnemySystem {
       const ax = ally.group.position.x
       const az = ally.group.position.z
 
+      if (ally.isStunned?.(now)) {
+        ally.behavior = ally.behavior || {}
+        ally.behavior.state = 'stun'
+        ally.playStun?.()
+        const pos = ally.group.position
+        const groundY = world._getSurfaceY(pos.x, pos.z)
+        ally.group.position.y += (groundY - ally.group.position.y) * 0.18
+        if (world.currentWorld === 'dungeon' && Number.isFinite(Number(world._dungeonSurfaceY)))
+          ally.group.position.y = Number(world._dungeonSurfaceY)
+        this.resolveIfInsideSolid(ally)
+        continue
+      }
+
       const targetEnemy = primaryThreat
       if (targetEnemy?.group) {
         const targetPos = targetEnemy.group.position
@@ -295,7 +323,6 @@ export default class DungeonEnemySystem {
       else if (hasPlayer) {
         const dxp = px - ax
         const dzp = pz - az
-        const d2p = dxp * dxp + dzp * dzp
         const len = Math.hypot(dxp, dzp)
         const dist = len
         if (dist > followCatchUp) {

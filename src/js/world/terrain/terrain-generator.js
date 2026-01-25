@@ -85,6 +85,7 @@ export default class TerrainGenerator {
     this.biomeMap = [] // 缓存群系 ID 2D 数组
     this.biomeDataMap = [] // 缓存群系数据（包含权重）
     this.plantData = [] // 植物数据 [{x, y, z, plantId}]
+    this.treeModelData = [] // 树模型实例数据 [{x, y, z, modelKey, rotationY}]
 
     // 群系相关参数
     this.params.biomeSource = options.biomeSource ?? 'panel' // 'panel' | 'generator'
@@ -589,6 +590,7 @@ export default class TerrainGenerator {
    */
   generateTrees(rng) {
     const { width, height } = this.container.getSize()
+    this.treeModelData = []
     const stats = {
       treeCount: 0,
       treeTrunkBlocks: 0,
@@ -639,12 +641,50 @@ export default class TerrainGenerator {
         if (baseY >= height)
           continue
 
+        const aboveBlock = this.container.getBlock(baseX, baseY, baseZ)
+        if (aboveBlock && aboveBlock.id !== blocks.empty.id)
+          continue
+
+        const useModels = !!(this.params.trees?.useModels)
+        const vegType = String(vegetationType.type || '').toLowerCase()
+
+        if (useModels && vegType && vegType !== 'cactus') {
+          const modelKey = this._pickTreeModelKey(vegType, biomeId, rng)
+          this.treeModelData.push({
+            x: baseX,
+            y: surfaceHeight,
+            z: baseZ,
+            modelKey,
+            rotationY: rng.random() * Math.PI * 2,
+          })
+          stats.treeCount++
+          continue
+        }
+
         this._generateVegetation(baseX, baseY, baseZ, vegetationType, rng, stats)
         stats.treeCount++
       }
     }
 
     return stats
+  }
+
+  _pickTreeModelKey(vegType, biomeId, rng) {
+    const v = String(vegType || '').toLowerCase()
+    const biome = String(biomeId || '').toLowerCase()
+    const r = rng?.random ? rng.random() : Math.random()
+
+    if (v.includes('cherry'))
+      return 'tree_3'
+    if (v.includes('birch'))
+      return 'tree_1'
+
+    if (biome === 'plains')
+      return r < 0.55 ? 'tree_1' : (r < 0.85 ? 'tree_2' : 'tree_3')
+    if (biome === 'forest')
+      return r < 0.25 ? 'tree_1' : (r < 0.75 ? 'tree_2' : 'tree_3')
+
+    return r < 0.4 ? 'tree_1' : (r < 0.8 ? 'tree_2' : 'tree_3')
   }
 
   /**

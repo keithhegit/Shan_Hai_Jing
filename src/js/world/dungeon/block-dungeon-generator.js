@@ -171,6 +171,9 @@ export default class BlockDungeonGenerator {
       this.chunkManager?.removePlantsInWorldBoxes?.([
         { minX, maxX, minZ, maxZ, minY: 0, maxY: (this.chunkManager?.chunkHeight ?? 32) - 1 },
       ])
+      this.chunkManager?.removeTreesInWorldBoxes?.([
+        { minX, maxX, minZ, maxZ, minY: 0, maxY: (this.chunkManager?.chunkHeight ?? 32) - 1 },
+      ])
     }
 
     // Spawn points

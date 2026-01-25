@@ -132,6 +132,9 @@ export default class InventorySystem {
       panel: world?._activeInventoryPanel ?? null,
       backpack: { ...backpackItems },
       warehouse: { ...warehouseItems },
+      canisterMeta: this.inventory?.canisterMeta
+        ? (typeof structuredClone === 'function' ? structuredClone(this.inventory.canisterMeta) : JSON.parse(JSON.stringify(this.inventory.canisterMeta)))
+        : {},
       warehousePage: this._warehousePage,
       warehousePagesUnlocked: unlockedPages,
       warehousePagesTotal: totalPages,
@@ -237,21 +240,35 @@ export default class InventorySystem {
       capturedResourceKey: meta.capturedResourceKey ? String(meta.capturedResourceKey) : null,
       capturedKind: meta.capturedKind ? String(meta.capturedKind) : null,
       capturedDisplayName: meta.capturedDisplayName ? String(meta.capturedDisplayName) : null,
-      capturedAt: Date.now(),
+      capturedAt: Number.isFinite(Number(meta.capturedAt)) ? Number(meta.capturedAt) : Date.now(),
+      exhausted: !!meta.exhausted,
     }
     this.inventory.canisterMeta[id].push(entry)
     this._scheduleSave()
     return true
   }
 
-  consumeCanisterMeta(itemId) {
+  consumeCanisterMeta(itemId, metaIndex = null) {
     const id = String(itemId || '')
     const list = this.inventory?.canisterMeta?.[id]
     if (!id || !id.startsWith('canister_') || !Array.isArray(list) || list.length === 0)
       return null
-    const meta = list.shift()
+    const index = Number.isFinite(Number(metaIndex)) ? Math.max(0, Math.floor(Number(metaIndex))) : null
+    const meta = index === null ? list.shift() : list.splice(index, 1)[0]
     this._scheduleSave()
     return meta || null
+  }
+
+  rechargeCanisterMeta(itemId, metaIndex) {
+    const id = String(itemId || '')
+    const index = Math.max(0, Math.floor(Number(metaIndex)))
+    const list = this.inventory?.canisterMeta?.[id]
+    if (!id || !id.startsWith('canister_') || !Number.isFinite(Number(metaIndex)) || !Array.isArray(list) || !list[index])
+      return false
+    list[index].exhausted = false
+    this._scheduleSave()
+    this.emitInventoryState()
+    return true
   }
 
   peekCanisterMeta(itemId) {
@@ -343,16 +360,20 @@ export default class InventorySystem {
     const available = Math.max(1, Math.floor(Number(found.count) || 1))
     const dropCount = isStack ? Math.min(available, amount) : 1
 
+    const canisterMeta = String(itemId).startsWith('canister_')
+      ? (this.consumeCanisterMeta(itemId, found.metaIndex) || null)
+      : null
+
     const ok = this.removeItem('backpack', itemId, dropCount)
     if (!ok)
       return
 
     const p = world.player?.getPosition?.() || { x: 0, z: 0 }
     if (world.currentWorld === 'dungeon') {
-      world.dropSystem?.spawnDungeonItemDrop?.({ itemId, amount: dropCount, x: p.x, z: p.z })
+      world.dropSystem?.spawnDungeonItemDrop?.({ itemId, amount: dropCount, x: p.x, z: p.z, canisterMeta })
     }
     else if (world.currentWorld === 'hub') {
-      world.dropSystem?.spawnHubDrop?.(itemId, dropCount, p.x, p.z, { persist: true })
+      world.dropSystem?.spawnHubDrop?.(itemId, dropCount, p.x, p.z, { persist: true, canisterMeta })
     }
 
     const label = world._getModelFilenameByResourceKey?.(itemId) || itemId
@@ -399,6 +420,7 @@ export default class InventorySystem {
             capturedKind: v.capturedKind ? String(v.capturedKind) : null,
             capturedDisplayName: v.capturedDisplayName ? String(v.capturedDisplayName) : null,
             capturedAt: Number.isFinite(Number(v.capturedAt)) ? Number(v.capturedAt) : null,
+            exhausted: !!v.exhausted,
           }))
       }
       return {
@@ -657,8 +679,17 @@ export default class InventorySystem {
         })
         continue
       }
-      for (let i = 0; i < n; i++)
-        expanded.push({ uid: `${id}:${seq++}`, itemId: id, w, h, count: 1 })
+      const isCanister = String(id).startsWith('canister_')
+      for (let i = 0; i < n; i++) {
+        expanded.push({
+          uid: `${id}:${seq++}`,
+          itemId: id,
+          w,
+          h,
+          count: 1,
+          metaIndex: isCanister ? i : null,
+        })
+      }
     }
 
     const canFitAt = (uid, x, y, w, h) => {

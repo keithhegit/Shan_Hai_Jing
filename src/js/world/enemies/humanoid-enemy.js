@@ -320,6 +320,14 @@ export default class HumanoidEnemy {
     return clip ? this.playAnimation(clip) : false
   }
 
+  playStun() {
+    const ok = this.playAnimation('Stun') || this.playAnimation('Dizzy')
+    if (ok)
+      return true
+    const clip = this._findActionByIncludes(['stun', 'dizzy', 'stunned', 'dizziness'])
+    return clip ? this.playAnimation(clip) : (this.playAnimation('Idle') || false)
+  }
+
   update() {
     const t = (this.time?.elapsed ?? 0) * 0.001
 

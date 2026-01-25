@@ -21,6 +21,7 @@ let dungeonToastTimer = null
 const lockState = ref(null)
 const inventoryPanel = ref(null)
 const inventoryData = ref({ panel: null, backpack: {}, warehouse: {} })
+const inventoryCanisterMeta = ref({})
 const backpackGrid = ref(null)
 const gridState = ref(null)
 const gridDrag = ref(null)
@@ -28,6 +29,7 @@ const gridHover = ref(null)
 const backpackGridPointerEl = ref(null)
 const inventorySelected = ref(null)
 const discardConfirm = ref(null)
+const rechargeConfirm = ref(null)
 const gridCellPx = 42
 const warehousePage = ref(1)
 const warehousePagesUnlocked = ref(2)
@@ -230,6 +232,7 @@ function onInventoryUpdate(payload) {
   inventoryData.value = payload || { panel: inventoryPanel.value, backpack: {}, warehouse: {} }
   if (payload?.panel)
     inventoryPanel.value = payload.panel
+  inventoryCanisterMeta.value = payload?.canisterMeta || {}
   backpackGrid.value = payload?.backpackGrid || null
   warehouseGrid.value = payload?.warehouseGrid || null
   if (payload?.warehousePage)
@@ -278,10 +281,44 @@ function setWarehousePage(nextPage) {
   emitter.emit('inventory:warehouse_page', { page })
 }
 
-function equipItem(itemId) {
+function equipItem(itemId, extra = null) {
   if (!itemId)
     return
-  emitter.emit('inventory:equip', { itemId })
+  const payload = { itemId }
+  if (extra && typeof extra === 'object')
+    Object.assign(payload, extra)
+  emitter.emit('inventory:equip', payload)
+}
+
+function equipSelectedCanister() {
+  const selected = inventorySelected.value
+  const g = gridState.value
+  if (!selected?.uid || !g)
+    return
+  const list = [...(g.items || []), ...(g.overflow || [])]
+  const it = list.find(i => i?.uid === selected.uid) || null
+  if (!it?.itemId || !String(it.itemId).startsWith('canister_'))
+    return
+  const metaIndex = Number.isFinite(Number(it.metaIndex)) ? Math.max(0, Math.floor(Number(it.metaIndex))) : null
+  const meta = metaIndex === null ? null : (inventoryCanisterMeta.value?.[it.itemId]?.[metaIndex] || null)
+  if (meta?.exhausted) {
+    rechargeConfirm.value = { itemId: it.itemId, metaIndex }
+    return
+  }
+  equipItem(it.itemId, { metaIndex })
+}
+
+function cancelRecharge() {
+  rechargeConfirm.value = null
+}
+
+function confirmRecharge() {
+  const payload = rechargeConfirm.value
+  if (!payload?.itemId)
+    return
+  emitter.emit('pet:recharge', { itemId: payload.itemId, metaIndex: payload.metaIndex })
+  rechargeConfirm.value = null
+  equipItem(payload.itemId, { metaIndex: payload.metaIndex })
 }
 
 function bagEntries(bag) {
@@ -560,6 +597,49 @@ function gridIconKind(id) {
   if (key.startsWith('canister_'))
     return 'canister'
   return null
+}
+
+function avatarIconSrcForResourceKey(resourceKey) {
+  const key = String(resourceKey || '')
+  const map = {
+    animal_cat: 'cat.jpg',
+    animal_chicken: 'chicken.jpg',
+    animal_dog: 'dog.jpg',
+    animal_horse: 'horse.jpg',
+    animal_pig: 'pig.jpg',
+    animal_sheep: 'sheep.jpg',
+    animal_wolf: 'wolf.jpg',
+    enemy_giant: 'giant.jpg',
+    enemy_skeleton: 'skeleton.jpg',
+    enemy_skeleton_armor: 'skeleton_armor.jpg',
+    enemy_yeti2: 'yeti2.jpg',
+  }
+  const filename = map[key]
+  return filename ? `/img/icons/${filename}` : null
+}
+
+function gridItemCanisterMeta(item) {
+  const it = item && typeof item === 'object' ? item : null
+  const itemId = it?.itemId ? String(it.itemId) : ''
+  if (!itemId.startsWith('canister_'))
+    return null
+
+  const index = Number.isFinite(Number(it?.metaIndex)) ? Math.max(0, Math.floor(Number(it.metaIndex))) : null
+  if (index === null)
+    return null
+  const metaList = inventoryCanisterMeta.value?.[itemId]
+  return Array.isArray(metaList) ? (metaList[index] || null) : null
+}
+
+function gridItemAvatarSrc(item) {
+  const meta = gridItemCanisterMeta(item)
+  const resourceKey = meta?.capturedResourceKey ? String(meta.capturedResourceKey) : ''
+  return resourceKey ? avatarIconSrcForResourceKey(resourceKey) : null
+}
+
+function gridItemIsExhausted(item) {
+  const meta = gridItemCanisterMeta(item)
+  return !!meta?.exhausted
 }
 
 onMounted(() => {
@@ -919,6 +999,35 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <div
+          v-if="rechargeConfirm"
+          class="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-black/60 px-4 backdrop-blur-sm"
+          @click.self="cancelRecharge"
+        >
+          <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-4 shadow-2xl backdrop-blur-md">
+            <div class="text-sm font-bold text-white/90">
+              灵宠精疲力竭
+            </div>
+            <div class="mt-2 text-sm opacity-90">
+              该收容罐处于“精疲力竭”状态，需要消耗 1 枚金币充能后才能再次投掷。
+            </div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+              <button
+                class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+                @click="cancelRecharge"
+              >
+                否
+              </button>
+              <button
+                class="rounded-lg border border-emerald-300/30 bg-emerald-500/20 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500/25"
+                @click="confirmRecharge"
+              >
+                是，消耗 1 金币
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="flex items-start justify-between gap-4">
           <div class="text-lg font-semibold drop-shadow">
             {{ inventoryPanel === 'warehouse' ? '仓库' : '背包' }}
@@ -1010,23 +1119,32 @@ onBeforeUnmount(() => {
                         <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
                         <path d="M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                       </svg>
-                      <svg
+                      <img
                         v-else-if="gridIconKind(it.itemId) === 'key'"
-                        class="h-4 w-4 shrink-0 opacity-90"
-                        viewBox="0 0 24 24"
-                        fill="none"
+                        class="h-5 w-5 shrink-0 rounded opacity-95"
+                        src="/img/icons/key.jpg"
+                        alt="key"
                       >
-                        <path d="M10 14a4 4 0 1 1 1.17-2.83L20 11v3h-2v2h-2v2h-3v-2.2l-1.83-.12A4 4 0 0 1 10 14Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                      </svg>
-                      <svg
+                      <div
                         v-else-if="gridIconKind(it.itemId) === 'canister'"
-                        class="h-4 w-4 shrink-0 opacity-90"
-                        viewBox="0 0 24 24"
-                        fill="none"
+                        class="relative h-5 w-5 shrink-0"
+                        :class="gridItemIsExhausted(it) ? 'opacity-60 grayscale' : 'opacity-95'"
                       >
-                        <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                        <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                      </svg>
+                        <svg
+                          class="h-5 w-5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                          <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <img
+                          v-if="gridItemAvatarSrc(it)"
+                          class="absolute -right-1 -top-1 h-3.5 w-3.5 rounded border border-black/40 object-cover"
+                          :src="gridItemAvatarSrc(it)"
+                          alt="avatar"
+                        >
+                      </div>
                       <svg
                         v-else-if="gridIconKind(it.itemId) === 'gun'"
                         class="h-4 w-4 shrink-0 opacity-90"
@@ -1055,6 +1173,13 @@ onBeforeUnmount(() => {
                       @click="equipItem('material_gun')"
                     >
                       装备/收起
+                    </button>
+                    <button
+                      v-if="inventorySelected?.itemId && inventorySelected.itemId.startsWith('canister_')"
+                      class="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold hover:bg-white/15"
+                      @click="equipSelectedCanister"
+                    >
+                      装备/抱起
                     </button>
                     <button
                       v-if="inventoryPanel === 'warehouse' && inventorySelected?.itemId"
@@ -1196,23 +1321,32 @@ onBeforeUnmount(() => {
                         <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2" />
                         <path d="M9 12h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                       </svg>
-                      <svg
+                      <img
                         v-else-if="gridIconKind(it.itemId) === 'key'"
-                        class="h-4 w-4 shrink-0 opacity-90"
-                        viewBox="0 0 24 24"
-                        fill="none"
+                        class="h-5 w-5 shrink-0 rounded opacity-95"
+                        src="/img/icons/key.jpg"
+                        alt="key"
                       >
-                        <path d="M10 14a4 4 0 1 1 1.17-2.83L20 11v3h-2v2h-2v2h-3v-2.2l-1.83-.12A4 4 0 0 1 10 14Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                      </svg>
-                      <svg
+                      <div
                         v-else-if="gridIconKind(it.itemId) === 'canister'"
-                        class="h-4 w-4 shrink-0 opacity-90"
-                        viewBox="0 0 24 24"
-                        fill="none"
+                        class="relative h-5 w-5 shrink-0"
+                        :class="gridItemIsExhausted(it) ? 'opacity-60 grayscale' : 'opacity-95'"
                       >
-                        <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
-                        <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                      </svg>
+                        <svg
+                          class="h-5 w-5"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path d="M8 6h8l1 3v10a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9l1-3Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                          <path d="M9 9h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                        <img
+                          v-if="gridItemAvatarSrc(it)"
+                          class="absolute -right-1 -top-1 h-3.5 w-3.5 rounded border border-black/40 object-cover"
+                          :src="gridItemAvatarSrc(it)"
+                          alt="avatar"
+                        >
+                      </div>
                       <svg
                         v-else-if="gridIconKind(it.itemId) === 'gun'"
                         class="h-4 w-4 shrink-0 opacity-90"

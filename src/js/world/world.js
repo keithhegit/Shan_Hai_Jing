@@ -295,6 +295,9 @@ export default class World {
       this._onInventoryEquip = (payload) => {
         this._equipInventoryItem(payload)
       }
+      this._onPetRecharge = (payload) => {
+        this._rechargeCanister(payload)
+      }
       this._onInventoryGridPlace = (payload) => {
         this._placeBackpackGridItem(payload)
       }
@@ -334,6 +337,7 @@ export default class World {
       emitter.on('inventory:warehouse_page', this._onWarehousePage)
       emitter.on('inventory:select', this._onInventorySelect)
       emitter.on('input:grab_pet', this._onGrabPet)
+      emitter.on('pet:recharge', this._onPetRecharge)
 
       this._ensureStarterMatterGun()
       this._emitInventorySummary()
@@ -601,21 +605,67 @@ export default class World {
 
   _equipInventoryItem(payload) {
     const itemId = payload?.itemId
-    if (itemId !== 'material_gun')
+    const id = itemId ? String(itemId) : ''
+    if (id !== 'material_gun' && !id.startsWith('canister_'))
       return
     const items = this._getBagItems('backpack')
-    const count = Math.max(0, Math.floor(Number(items?.[itemId]) || 0))
+    const count = Math.max(0, Math.floor(Number(items?.[id]) || 0))
     if (count <= 0) {
-      emitter.emit('dungeon:toast', { text: '背包里没有物质枪' })
+      emitter.emit('dungeon:toast', { text: id === 'material_gun' ? '背包里没有物质枪' : '背包里没有收容罐' })
       return
     }
 
-    const next = !this._isMaterialGunEquipped
-    this._isMaterialGunEquipped = next
-    this.player?.setMatterGunEquipped?.(next)
-    if (!next)
-      this._stopMaterialGunFire()
-    emitter.emit('dungeon:toast', { text: next ? '已装备物质枪' : '已收起物质枪' })
+    if (id === 'material_gun') {
+      const next = !this._isMaterialGunEquipped
+      this._isMaterialGunEquipped = next
+      this.player?.setMatterGunEquipped?.(next)
+      if (!next)
+        this._stopMaterialGunFire()
+      emitter.emit('dungeon:toast', { text: next ? '已装备物质枪' : '已收起物质枪' })
+      return
+    }
+
+    const metaIndex = payload?.metaIndex ?? null
+    const meta = Number.isFinite(Number(metaIndex))
+      ? (this.inventorySystem?.inventory?.canisterMeta?.[id]?.[Math.max(0, Math.floor(Number(metaIndex)))] || null)
+      : (this.inventorySystem?.peekCanisterMeta?.(id) || null)
+    if (meta?.exhausted) {
+      emitter.emit('dungeon:toast', { text: '该灵宠精疲力竭：需要 1 金币充能' })
+      return
+    }
+
+    const ok = this._armCanisterThrow(id, metaIndex)
+    if (!ok) {
+      emitter.emit('dungeon:toast', { text: '收容罐不可用' })
+      return
+    }
+    if (this._activeInventoryPanel)
+      this._closeInventoryPanel()
+    const label = this._getModelFilenameByResourceKey?.(id) || id
+    emitter.emit('ui:log', { text: `已抱起：${label}（右键投掷）` })
+    emitter.emit('dungeon:toast', { text: `已抱起：${label}（右键投掷）` })
+  }
+
+  _rechargeCanister(payload) {
+    const itemId = payload?.itemId ? String(payload.itemId) : ''
+    const metaIndex = payload?.metaIndex ?? null
+    if (!itemId.startsWith('canister_'))
+      return
+    const coins = Math.max(0, Math.floor(Number(this._inventory?.backpack?.items?.coin) || 0))
+    if (coins <= 0) {
+      emitter.emit('dungeon:toast', { text: '金币不足：需要 1 金币充能' })
+      return
+    }
+    const ok = this.inventorySystem?.rechargeCanisterMeta?.(itemId, metaIndex)
+    if (!ok) {
+      emitter.emit('dungeon:toast', { text: '无法充能：收容罐状态异常' })
+      return
+    }
+    this._removeInventoryItem('backpack', 'coin', 1)
+    emitter.emit('dungeon:toast', { text: '已充能：收容罐恢复可投掷' })
+    this._emitInventorySummary?.()
+    this._emitInventoryState?.()
+    this._scheduleInventorySave?.()
   }
 
   _startMaterialGunFire() {
@@ -1181,13 +1231,245 @@ export default class World {
     return this.hubNpcSystem?.throwCarriedAnimal?.()
   }
 
-  _armCanisterThrow(itemId) {
+  _armCanisterThrow(itemId, metaIndex = null) {
     const id = String(itemId || '')
     const count = this._inventory?.backpack?.items?.[id] || 0
     if (!id.startsWith('canister_') || count <= 0)
       return false
-    this._armedCanisterThrow = { itemId: id }
+    if (this._armedCanisterThrow?.itemId === id) {
+      this._clearArmedCanisterThrow()
+      return true
+    }
+    this._armedCanisterThrow = { itemId: id, metaIndex: Number.isFinite(Number(metaIndex)) ? Math.max(0, Math.floor(Number(metaIndex))) : null }
+    this._ensureCanisterCarryVisual(id)
+    this._ensureCanisterAimPreview()
     return true
+  }
+
+  _clearArmedCanisterThrow() {
+    this._armedCanisterThrow = null
+    this._canisterCarry?.removeFromParent?.()
+    this._canisterCarry = null
+    this._canisterAimPreview?.removeFromParent?.()
+    this._canisterAimPreview = null
+  }
+
+  _ensureCanisterCarryVisual(itemId) {
+    const gltf = this.resources?.items?.canister
+    const scene = gltf?.scene
+    if (!scene)
+      return null
+    if (this._canisterCarry)
+      this._canisterCarry.removeFromParent?.()
+    const group = new THREE.Group()
+    group.name = `CanisterCarry:${itemId}`
+    const obj = scene.clone(true)
+    obj.traverse?.((c) => {
+      if (c?.isMesh) {
+        c.castShadow = true
+        c.receiveShadow = true
+      }
+    })
+    obj.scale.set(0.65, 0.65, 0.65)
+    group.add(obj)
+    this.scene.add(group)
+    this._canisterCarry = group
+    return group
+  }
+
+  _ensureCanisterAimPreview() {
+    if (this._canisterAimPreview)
+      return this._canisterAimPreview
+    const group = new THREE.Group()
+    group.name = 'CanisterAimPreview'
+    const geom = new THREE.BufferGeometry()
+    const mat = new THREE.LineBasicMaterial({ color: 0x8BE9FD, transparent: true, opacity: 0.85 })
+    const line = new THREE.Line(geom, mat)
+    line.frustumCulled = false
+    group.add(line)
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 12, 12),
+      new THREE.MeshStandardMaterial({ color: 0xFFD166, roughness: 0.8, metalness: 0.0 }),
+    )
+    marker.frustumCulled = false
+    group.add(marker)
+    group.userData._line = line
+    group.userData._marker = marker
+    this.scene.add(group)
+    this._canisterAimPreview = group
+    return group
+  }
+
+  _updateCanisterCarryAndAim() {
+    const camera = this.experience.camera?.instance
+    const carry = this._canisterCarry
+    const aim = this._canisterAimPreview
+    if (!camera || !this._armedCanisterThrow?.itemId) {
+      carry && (carry.visible = false)
+      aim && (aim.visible = false)
+      return
+    }
+    const camPos = new THREE.Vector3()
+    const camDir = new THREE.Vector3()
+    camera.getWorldPosition(camPos)
+    camera.getWorldDirection(camDir)
+    camDir.normalize()
+
+    const hold = camPos.clone().add(camDir.clone().multiplyScalar(2.0))
+    hold.y -= 0.85
+    const groundY = this._getSurfaceY(hold.x, hold.z) + 0.2
+    if (hold.y < groundY)
+      hold.y = groundY
+
+    if (carry) {
+      carry.visible = true
+      carry.position.lerp(hold, 0.35)
+      carry.rotation.y = Math.atan2(camDir.x, camDir.z)
+    }
+
+    if (!aim)
+      return
+    aim.visible = true
+    const line = aim.userData?._line
+    const marker = aim.userData?._marker
+    if (!line?.geometry || !marker)
+      return
+
+    const start = hold.clone()
+    const v0 = camDir.clone().multiplyScalar(12.0)
+    v0.y = Math.max(3.5, camDir.y * 10.0 + 5.5)
+    const g = 18.0
+    const dt = 1 / 24
+    const points = []
+    const pos = start.clone()
+    const vel = v0.clone()
+    for (let i = 0; i < 36; i++) {
+      points.push(pos.clone())
+      vel.y -= g * dt
+      pos.addScaledVector(vel, dt)
+      const gy = this._getSurfaceY(pos.x, pos.z)
+      if (pos.y <= gy) {
+        pos.y = gy
+        points.push(pos.clone())
+        break
+      }
+    }
+    const positions = new Float32Array(points.length * 3)
+    for (let i = 0; i < points.length; i++) {
+      positions[i * 3 + 0] = points[i].x
+      positions[i * 3 + 1] = points[i].y
+      positions[i * 3 + 2] = points[i].z
+    }
+    line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    line.geometry.computeBoundingSphere()
+    marker.position.copy(points[points.length - 1] || start)
+  }
+
+  _applyStun(entity, untilMs) {
+    if (!entity)
+      return
+    const t = Math.max(0, Math.floor(Number(untilMs) || 0))
+    entity._stunnedUntil = Math.max(Number(entity._stunnedUntil) || 0, t)
+    entity.playStun?.()
+  }
+
+  _showStunIndicator(target, durationMs = 3000) {
+    if (!target)
+      return
+    if (!target.userData)
+      target.userData = {}
+    if (target.userData._stunIndicator)
+      return
+    const div = document.createElement('div')
+    div.innerHTML = '<svg width="40" height="40" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg"><path d="M10 28c6-12 38-12 44 0-6 12-38 12-44 0Z" fill="rgba(255,255,255,0.92)"/><path d="M26 18l4-10 6 12 10-4-8 10 12 6-14 2 4 10-10-6-8 10 2-14-12-2 12-6Z" fill="rgba(20,20,20,0.85)"/></svg>'
+    div.style.pointerEvents = 'none'
+    const label = new CSS2DObject(div)
+    label.position.set(0, 2.65, 0)
+    target.add(label)
+    target.userData._stunIndicator = label
+    const ttl = Math.max(200, Math.floor(Number(durationMs) || 3000))
+    setTimeout(() => {
+      const cur = target?.userData?._stunIndicator
+      if (cur) {
+        cur.removeFromParent?.()
+        cur.element?.remove?.()
+        delete target.userData._stunIndicator
+      }
+    }, ttl)
+  }
+
+  _updateCanisterProjectile(dt) {
+    const proj = this._canisterProjectile
+    if (!proj?.group || !proj.velocity)
+      return
+    const now = this.experience.time?.elapsed ?? 0
+    const g = 18.0
+    proj.velocity.y -= g * dt
+    proj.group.position.addScaledVector(proj.velocity, dt)
+    proj.group.rotation.y += 4.2 * dt
+    proj.group.rotation.x += 3.2 * dt
+
+    const pos = proj.group.position
+    const groundY = this._getSurfaceY(pos.x, pos.z)
+    if (pos.y <= groundY) {
+      pos.y = groundY
+      this._finalizeCanisterProjectileImpact({ position: pos.clone(), now })
+      return
+    }
+
+    if (this.chunkManager?.getBlockWorld) {
+      const ix = Math.floor(pos.x)
+      const iz = Math.floor(pos.z)
+      const iy = Math.floor(pos.y)
+      const b = this.chunkManager.getBlockWorld(ix, iy, iz)
+      if (b?.id && b.id !== blocks.empty.id) {
+        this._finalizeCanisterProjectileImpact({ position: pos.clone(), now })
+        return
+      }
+    }
+
+    const enemies = this.currentWorld === 'dungeon' ? (Array.isArray(this._dungeonEnemies) ? this._dungeonEnemies : []) : []
+    for (const enemy of enemies) {
+      if (!enemy?.group || enemy.isDead)
+        continue
+      const ex = enemy.group.position.x
+      const ez = enemy.group.position.z
+      const dx = ex - pos.x
+      const dz = ez - pos.z
+      const hitR = Math.max(0.65, Number(enemy.hitRadius) || 0.9)
+      if (dx * dx + dz * dz <= hitR * hitR) {
+        this._finalizeCanisterProjectileImpact({ position: pos.clone(), now, enemy })
+        return
+      }
+    }
+  }
+
+  _finalizeCanisterProjectileImpact({ position, now, enemy } = {}) {
+    const proj = this._canisterProjectile
+    if (!proj)
+      return
+    const resourceKey = proj.resourceKey
+    const itemId = proj.itemId
+    const meta = proj.meta
+    proj.group?.removeFromParent?.()
+    this._canisterProjectile = null
+
+    const ally = this._spawnSummonedAlly({
+      resourceKey,
+      position,
+      displayName: proj.displayName,
+      capturedKind: proj.capturedKind,
+      canisterItemId: itemId,
+      canisterMeta: meta,
+    })
+    if (ally) {
+      this._applyStun(ally, (now ?? 0) + 3000)
+      this._showStunIndicator(ally.group, 3000)
+    }
+    if (enemy) {
+      this._applyStun(enemy, (now ?? 0) + 3000)
+      this._showStunIndicator(enemy.group, 3000)
+    }
   }
 
   _throwArmedCanister() {
@@ -1200,38 +1482,48 @@ export default class World {
     if (count <= 0)
       return false
 
-    const meta = this.inventorySystem?.consumeCanisterMeta?.(itemId) || null
+    const metaIndex = this._armedCanisterThrow?.metaIndex ?? null
+    const meta = this.inventorySystem?.consumeCanisterMeta?.(itemId, metaIndex) || null
     const resourceKey = meta?.capturedResourceKey || this._getFallbackSummonResourceKey(itemId)
     if (!resourceKey)
       return false
 
-    const playerPos = this.player?.getPosition?.() || { x: 0, y: 0, z: 0 }
-    const spawnPos = new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z)
+    const carryPos = this._canisterCarry?.position?.clone?.()
+    const startPos = carryPos || new THREE.Vector3(this.player?.getPosition?.()?.x ?? 0, this.player?.getPosition?.()?.y ?? 0, this.player?.getPosition?.()?.z ?? 0)
     const dir = new THREE.Vector3()
     this.experience.camera?.instance?.getWorldDirection?.(dir)
-    dir.y = 0
-    if (dir.lengthSq() < 1e-6)
-      dir.set(0, 0, -1)
     dir.normalize()
-    spawnPos.add(dir.clone().multiplyScalar(2.0))
+    const v0 = dir.clone().multiplyScalar(12.0)
+    v0.y = Math.max(3.5, dir.y * 10.0 + 5.5)
 
     this._removeInventoryItem('backpack', itemId, 1)
     this._emitInventorySummary?.()
     this._emitInventoryState?.()
     this._scheduleInventorySave?.()
 
-    const ally = this._spawnSummonedAlly({
+    this._canisterProjectile?.group?.removeFromParent?.()
+    const gltf = this.resources?.items?.canister
+    const scene = gltf?.scene
+    if (!scene)
+      return false
+    const projGroup = new THREE.Group()
+    projGroup.name = `CanisterProjectile:${itemId}`
+    const obj = scene.clone(true)
+    obj.scale.set(0.65, 0.65, 0.65)
+    projGroup.add(obj)
+    projGroup.position.copy(startPos)
+    this.scene.add(projGroup)
+    this._canisterProjectile = {
+      group: projGroup,
+      itemId,
+      meta,
       resourceKey,
-      position: spawnPos,
       displayName: meta?.capturedDisplayName || null,
       capturedKind: meta?.capturedKind || null,
-      canisterItemId: itemId,
-      canisterMeta: meta,
-    })
-    if (!ally)
-      return false
-
-    this._armedCanisterThrow = null
+      velocity: v0,
+      hitEnemy: null,
+    }
+    this._clearArmedCanisterThrow()
     return true
   }
 
@@ -1275,6 +1567,8 @@ export default class World {
     ally._resourceKey = key
     ally._typeLabel = displayName || (this._getModelFilenameByResourceKey?.(key) || key)
     ally._isSummonedAlly = true
+    this._summonedSeq = (this._summonedSeq ?? 1)
+    ally._summonedId = ally._summonedId || `ally_${this._summonedSeq++}`
     ally._summonedKind = capturedKind || null
     ally._summonedFromCanisterId = canisterItemId || null
     ally._summonedFromCanisterMeta = canisterMeta || null
@@ -1283,6 +1577,40 @@ export default class World {
     this._summonedAllies.push(ally)
     emitter.emit('ui:log', { text: `灵兽出战：${ally._typeLabel}` })
     return ally
+  }
+
+  _recallSummonedAlly(ally) {
+    if (!ally || !ally._isSummonedAlly || !ally.group)
+      return false
+    const itemId = String(ally._summonedFromCanisterId || '')
+    if (!itemId.startsWith('canister_'))
+      return false
+    const meta = ally._summonedFromCanisterMeta && typeof ally._summonedFromCanisterMeta === 'object'
+      ? ally._summonedFromCanisterMeta
+      : { capturedResourceKey: ally._resourceKey || null, capturedKind: ally._summonedKind || null, capturedDisplayName: ally._typeLabel || null }
+
+    const canAdd = this._canAddToBackpack?.(itemId, 1)
+    if (canAdd) {
+      this._addInventoryItem('backpack', itemId, 1)
+      this.inventorySystem?.recordCanisterMeta?.(itemId, meta)
+      this._scheduleInventorySave?.()
+      this._emitInventorySummary?.()
+      this._emitInventoryState?.()
+    }
+    else if (this.currentWorld === 'dungeon') {
+      this.dropSystem?.spawnDungeonItemDrop?.({ itemId, amount: 1, x: ally.group.position.x, z: ally.group.position.z, canisterMeta: meta })
+    }
+    else if (this.currentWorld === 'hub') {
+      this.dropSystem?.spawnHubDrop?.(itemId, 1, ally.group.position.x, ally.group.position.z, { persist: true, canisterMeta: meta })
+    }
+    else {
+      return false
+    }
+
+    emitter.emit('ui:log', { text: `已收容：${ally._typeLabel}` })
+    emitter.emit('dungeon:toast', { text: `已收容：${ally._typeLabel}` })
+    this._despawnSummonedAlly(ally)
+    return true
   }
 
   _despawnSummonedAlly(ally) {
@@ -1302,6 +1630,45 @@ export default class World {
     this._summonedAlliesGroup?.removeFromParent?.()
     this._summonedAlliesGroup = null
     this._armedCanisterThrow = null
+  }
+
+  _syncSummonedAlliesGroupForCurrentWorld() {
+    const group = this._summonedAlliesGroup
+    if (!group)
+      return
+    const nextParent = (this.currentWorld === 'dungeon' && this._dungeonGroup)
+      ? this._dungeonGroup
+      : this.scene
+    if (group.parent !== nextParent)
+      nextParent.add(group)
+  }
+
+  _teleportSummonedAlliesNearPlayer() {
+    const list = Array.isArray(this._summonedAllies) ? this._summonedAllies : []
+    if (list.length === 0 || !this.player)
+      return
+    const p = this.player.getPosition?.() || this.player.group?.position
+    if (!p)
+      return
+
+    for (let i = 0; i < list.length; i++) {
+      const ally = list[i]
+      if (!ally?.group)
+        continue
+      const angle = (i / Math.max(1, list.length)) * Math.PI * 2
+      const radius = 1.65 + i * 0.35
+      const x = p.x + Math.cos(angle) * radius
+      const z = p.z + Math.sin(angle) * radius
+      const y = this._getSurfaceY?.(x, z) ?? p.y ?? 0
+      ally.group.position.set(x, y, z)
+      if (ally.basePosition)
+        ally.basePosition.set(x, y, z)
+    }
+  }
+
+  _repositionSummonedAlliesForTeleport() {
+    this._syncSummonedAlliesGroupForCurrentWorld()
+    this._teleportSummonedAlliesNearPlayer()
   }
 
   _spawnAnimalThought(animal, text, durationSeconds) {
@@ -2007,6 +2374,9 @@ export default class World {
     if (this.environment)
       this.environment.update()
 
+    this._updateCanisterCarryAndAim()
+    this._updateCanisterProjectile(dt)
+
     // 每帧射线检测：用于 hover 提示与后续交互
     if (this.blockRaycaster)
       this.blockRaycaster.update()
@@ -2286,12 +2656,18 @@ export default class World {
       emitter.off('inventory:close', this._onInventoryClose)
     if (this._onInventoryTransfer)
       emitter.off('inventory:transfer', this._onInventoryTransfer)
+    if (this._onInventoryEquip)
+      emitter.off('inventory:equip', this._onInventoryEquip)
+    if (this._onInventoryGridPlace)
+      emitter.off('inventory:grid_place', this._onInventoryGridPlace)
     if (this._onInventorySelect)
       emitter.off('inventory:select', this._onInventorySelect)
     if (this._onWarehousePage)
       emitter.off('inventory:warehouse_page', this._onWarehousePage)
     if (this._onInventoryDrop)
       emitter.off('inventory:drop', this._onInventoryDrop)
+    if (this._onPetRecharge)
+      emitter.off('pet:recharge', this._onPetRecharge)
     if (this._onGrabPet)
       emitter.off('input:grab_pet', this._onGrabPet)
     if (this._onToggleBlockEditMode)

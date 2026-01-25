@@ -34,6 +34,7 @@ export const TREE_PARAMS = {
   minRadius: 2, // 树叶最小半径（方块数，范围: 1-12）
   maxRadius: 4, // 树叶最大半径（方块数，范围: 1-12）
   frequency: 0.05, // 树密度（0-1），值越大树越多，控制树木生成的频率
+  useModels: true,
 }
 
 // 渲染参数（影响视觉效果，可实时调整）

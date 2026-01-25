@@ -46,14 +46,36 @@ export default class InteractableSystem {
     const world = this.world
     if (!world || !world.player)
       return
+    const pets = this._getPetInteractables()
 
     if (world.currentWorld === 'hub') {
       const hubDrops = Array.isArray(world._hubDrops) ? world._hubDrops : []
-      this._updateActiveFromList([...(world.interactables || []), ...hubDrops])
+      this._updateActiveFromList([...(world.interactables || []), ...pets, ...hubDrops])
     }
     else if (world.currentWorld === 'dungeon') {
-      this._updateActiveFromList(world._dungeonInteractables)
+      this._updateActiveFromList([...(world._dungeonInteractables || []), ...pets])
     }
+  }
+
+  _getPetInteractables() {
+    const world = this.world
+    const allies = Array.isArray(world?._summonedAllies) ? world._summonedAllies : []
+    const list = []
+    for (let i = 0; i < allies.length; i++) {
+      const ally = allies[i]
+      if (!ally?.group || ally.isDead)
+        continue
+      list.push({
+        id: `pet_recall:${ally._summonedId || i}`,
+        title: ally._typeLabel || '灵宠',
+        hint: '按 E 收容',
+        x: ally.group.position.x,
+        z: ally.group.position.z,
+        range: 2.35,
+        petAlly: ally,
+      })
+    }
+    return list
   }
 
   _updateActiveFromList(list) {
@@ -87,6 +109,9 @@ export default class InteractableSystem {
         const hint = best.hint || (best.read ? '按 E 回顾' : '按 E 查看')
         emitter.emit('interactable:prompt', { title: best.title, hint })
       }
+      else {
+        world._activeInteractable = best
+      }
     }
     else if (world._activeInteractableId !== null && world._activeInteractable) {
       world._activeInteractableId = null
@@ -113,6 +138,17 @@ export default class InteractableSystem {
       return
 
     if (world._activeInteractable) {
+      if (world._activeInteractable.petAlly) {
+        const ok = world._recallSummonedAlly?.(world._activeInteractable.petAlly)
+        if (!ok)
+          return
+        world._activeInteractable.range = 0
+        world._activeInteractableId = null
+        world._activeInteractable = null
+        emitter.emit('interactable:prompt_clear')
+        emitter.emit('portal:prompt_clear')
+        return
+      }
       if (world._activeInteractable.isHubDrop) {
         const ok = world.dropSystem?.pickupHubDrop?.(world._activeInteractable)
         if (!ok)

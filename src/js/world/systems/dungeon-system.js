@@ -278,6 +278,7 @@ export default class DungeonSystem {
     }
 
     world.player.teleportTo(spawn.x, spawn.y + 1.1, spawn.z)
+    world._repositionSummonedAlliesForTeleport?.()
 
     if (world.environment) {
       world.environment.params.fogDensity = 0.03
@@ -312,6 +313,7 @@ export default class DungeonSystem {
       world.chunkManager.pumpIdleQueue()
       const y = world._getSurfaceY(x, z)
       world.player.teleportTo(x, y + 1.1, z)
+      world._repositionSummonedAlliesForTeleport?.()
 
       if (world.player?.movement?.config?.respawn?.position && world._savedRespawnPosition) {
         world.player.movement.config.respawn.position = { ...world._savedRespawnPosition }
@@ -335,7 +337,6 @@ export default class DungeonSystem {
       world._lockedEnemy = null
       world._dungeonRewardPending = null
       world._dungeonRewardSpawned = false
-      world._clearSummonedAllies?.()
       if (world._dungeonEnemies) {
         for (const enemy of world._dungeonEnemies)
           enemy?.destroy?.()
