@@ -38,6 +38,12 @@ export default class BlockDungeonGenerator {
         3: ['tribal', 'orc'],
         4: { boss: 'giant', adds: ['orc'] },
       },
+      hellfire: {
+        1: ['zombie'],
+        2: ['zombie'],
+        3: ['zombie'],
+        4: { boss: 'demon', adds: ['zombie'] },
+      },
       snow: {
         1: ['yeti'],
         2: ['yeti'],
@@ -437,6 +443,7 @@ export default class BlockDungeonGenerator {
   _getDirection(type) {
     switch (type) {
       case 'plains': return { x: 0, z: 1 }
+      case 'hellfire': return { x: 0, z: 1 }
       case 'desert': return { x: 0, z: -1 }
       case 'snow': return { x: 1, z: 0 }
       case 'forest': return { x: -1, z: 0 }
@@ -449,9 +456,10 @@ export default class BlockDungeonGenerator {
     const stone = blocks.stone.id
     switch (type) {
       case 'plains': return { floor: blocks.stone.id, wall: blocks.stone.id, roof: blocks.stone.id }
+      case 'hellfire': return { floor: blocks.redSand?.id || stone, wall: blocks.bricksDark?.id || stone, roof: blocks.bricksDark?.id || stone }
       case 'desert': return { floor: blocks.sand.id, wall: blocks.terracotta?.id || stone, roof: blocks.sand.id }
       case 'snow': return { floor: blocks.packedIce?.id || stone, wall: blocks.snow?.id || stone, roof: blocks.snow?.id || stone }
-      case 'forest': return { floor: blocks.dirt.id, wall: blocks.treeTrunk.id, roof: blocks.treeLeaves.id }
+      case 'forest': return { floor: blocks.dirt.id, wall: blocks.woodPlanks?.id || stone, roof: blocks.woodPlanks?.id || stone }
       case 'mine': return { floor: blocks.stone.id, wall: blocks.stone.id, roof: blocks.stone.id }
       default: return { floor: stone, wall: stone, roof: stone }
     }

@@ -21,6 +21,7 @@ export default class InputManager {
       q: false,
       e: false,
       r: false,
+      t: false,
       f: false,
       g: false,
       b: false,
@@ -41,8 +42,16 @@ export default class InputManager {
     this._onMouseUp = this.onMouseUp.bind(this)
     this._onContextMenu = this.onContextMenu.bind(this)
     this._onWheel = this.onWheel.bind(this)
+    this._onBlur = this.onBlur.bind(this)
+    this._onVisibilityChange = this.onVisibilityChange.bind(this)
+    this._onPointerLockChange = this.onPointerLockChange.bind(this)
 
     this.init()
+
+    this._buildActive = false
+    emitter.on('build:active', (active) => {
+      this._buildActive = !!active
+    })
   }
 
   normalizeKey(event) {
@@ -64,6 +73,9 @@ export default class InputManager {
     // 键盘事件
     window.addEventListener('keydown', this._onKeyDown)
     window.addEventListener('keyup', this._onKeyUp)
+    window.addEventListener('blur', this._onBlur)
+    document.addEventListener('visibilitychange', this._onVisibilityChange)
+    document.addEventListener('pointerlockchange', this._onPointerLockChange)
 
     // 鼠标按键事件
     window.addEventListener('mousedown', this._onMouseDown)
@@ -72,6 +84,36 @@ export default class InputManager {
 
     // 阻止右键菜单（避免影响 PointerLock / 场景交互）
     window.addEventListener('contextmenu', this._onContextMenu)
+  }
+
+  resetState({ emitRelease = true } = {}) {
+    if (emitRelease) {
+      if (this.keys.c)
+        emitter.emit('input:block', false)
+      if (this.keys.q)
+        emitter.emit('input:capture', { pressed: false })
+    }
+
+    for (const k of Object.keys(this.keys))
+      this.keys[k] = false
+    for (const k of Object.keys(this.mouse))
+      this.mouse[k] = false
+
+    emitter.emit('input:update', this.keys)
+  }
+
+  onBlur() {
+    this.resetState({ emitRelease: true })
+  }
+
+  onVisibilityChange() {
+    if (document.visibilityState !== 'visible')
+      this.resetState({ emitRelease: true })
+  }
+
+  onPointerLockChange() {
+    if (!document.pointerLockElement)
+      this.resetState({ emitRelease: true })
   }
 
   // ==================== 键盘事件 ====================
@@ -167,9 +209,21 @@ export default class InputManager {
         break
       case 'r':
         if (isPressed && !this.keys.r) {
-          emitter.emit('input:quick_return')
+          if (this._buildActive) {
+            emitter.emit('input:rotate_build')
+          }
+          else {
+            emitter.emit('input:quick_return')
+          }
         }
         this.keys.r = isPressed
+        break
+      case 't':
+        if (isPressed && !this.keys.t) {
+          if (this._buildActive)
+            emitter.emit('input:toggle_block_edit_mode')
+        }
+        this.keys.t = isPressed
         break
       case 'f':
         if (isPressed && !this.keys.f) {

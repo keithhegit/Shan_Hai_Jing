@@ -22,6 +22,7 @@ export default class HumanoidEnemy {
     this.hp = hp
     this.isDead = false
     this.isLocked = false
+    this._showHpBarAlways = false
     this.type = String(type || 'skeleton').toLowerCase()
     this._baseScale = scale
     this._destroyTimer = null
@@ -264,7 +265,12 @@ export default class HumanoidEnemy {
     const ratio = Math.max(0, Math.min(1, this.hp / denom))
     this._hpBarFill.scale.x = ratio
     if (this._hpBarBg)
-      this._hpBarBg.visible = !this.isDead && !!this.isLocked
+      this._hpBarBg.visible = !this.isDead && (this.isLocked || this._showHpBarAlways)
+  }
+
+  setShowHpBarAlways(enabled) {
+    this._showHpBarAlways = !!enabled
+    this._updateHpBar()
   }
 
   addTo(parent) {
@@ -532,7 +538,6 @@ export default class HumanoidEnemy {
     if (this.isDead)
       return false
 
-    const now = this.time?.elapsed ?? 0
     this.hp = Math.max(0, this.hp - amount)
     this._updateHpBar()
     if (this.hp <= 0) {
@@ -543,7 +548,7 @@ export default class HumanoidEnemy {
     const maxHp = Math.max(1, Math.floor(Number(this.maxHp) || 1))
     const threshold = Math.max(1, Math.ceil(maxHp * 0.15))
     if (this.hp > 0 && this.hp <= threshold) {
-      this._stunnedUntil = Math.max(this._stunnedUntil, now + 1200)
+      this._captureVulnerable = true
     }
 
     const hitClip = this._findActionByExact(['HitRecieve', 'HitReceive'])

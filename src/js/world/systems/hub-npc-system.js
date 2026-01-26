@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import emitter from '../../utils/event-bus.js'
 import HumanoidEnemy from '../enemies/humanoid-enemy.js'
+import { blocks } from '../terrain/blocks-config.js'
 
 export default class HubNpcSystem {
   init(ctx) {
@@ -41,6 +42,7 @@ export default class HubNpcSystem {
     const count = 15
     const centerX = world._hubCenter?.x ?? 0
     const centerZ = world._hubCenter?.z ?? 0
+    const cm = world.chunkManager
 
     const seeds = [
       { type: 'animal_pig', role: 'miner', label: '矿工鼠', dx: 6, dz: -6 },
@@ -52,15 +54,36 @@ export default class HubNpcSystem {
       { type: 'animal_dog', role: null, label: '狗狗', dx: 0, dz: -10 },
     ]
 
+    const findSafeSpawn = (sx, sz) => {
+      for (let ring = 0; ring <= 10; ring++) {
+        for (let dx = -ring; dx <= ring; dx++) {
+          for (let dz = -ring; dz <= ring; dz++) {
+            if (ring > 0 && Math.abs(dx) !== ring && Math.abs(dz) !== ring)
+              continue
+            const x = Math.floor(sx) + dx + 0.5
+            const z = Math.floor(sz) + dz + 0.5
+            cm.forceSyncGenerateArea?.(x, z, 1)
+            if (this._isWaterColumn(x, z))
+              continue
+            const y = world._getSurfaceY(x, z)
+            if (this._canOccupyAt(x, z, y, 0.45))
+              return { x, y, z }
+          }
+        }
+      }
+      const y = world._getSurfaceY(sx, sz)
+      return { x: sx, y, z: sz }
+    }
+
     const spawnAnimal = (cfg) => {
       const x = centerX + (cfg.dx ?? 0)
       const z = centerZ + (cfg.dz ?? 0)
-      const y = world._getSurfaceY(x, z)
+      const safe = findSafeSpawn(x, z)
       const stats = world._npcStats?.[cfg.type] || world._npcStats?.enemy_default || {}
       const hp = Math.max(1, Math.floor(Number(stats.hp) || 3))
 
       const animal = new HumanoidEnemy({
-        position: new THREE.Vector3(x, y, z),
+        position: new THREE.Vector3(safe.x, safe.y, safe.z),
         scale: 0.8,
         type: cfg.type,
         hp,
@@ -125,14 +148,15 @@ export default class HubNpcSystem {
       if (data.state === 'carried' && animal === world._carriedAnimal) {
         const camera = world.experience.camera?.instance
         if (camera) {
-          const camPos = new THREE.Vector3()
           const camDir = new THREE.Vector3()
-          camera.getWorldPosition(camPos)
           camera.getWorldDirection(camDir)
           camDir.normalize()
-
-          const hold = camPos.clone().add(camDir.multiplyScalar(2.1))
-          hold.y -= 0.85
+          const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize()
+          const p = playerPos || animal.group.position
+          const hold = new THREE.Vector3(p.x, p.y, p.z)
+            .add(camRight.multiplyScalar(-0.85))
+            .add(new THREE.Vector3(0, 1.65, 0))
+            .add(new THREE.Vector3(camDir.x, 0, camDir.z).normalize().multiplyScalar(0.35))
           const groundY = world._getSurfaceY(hold.x, hold.z) + 0.2
           if (hold.y < groundY)
             hold.y = groundY
@@ -141,6 +165,35 @@ export default class HubNpcSystem {
           animal.group.rotation.y = Math.atan2(camDir.x, camDir.z)
         }
         return
+      }
+
+      if (!data.physics && animal?.group) {
+        const pos = animal.group.position
+        if (this._isWaterColumn(pos.x, pos.z)) {
+          for (let ring = 1; ring <= 12; ring++) {
+            let moved = false
+            for (let dx = -ring; dx <= ring; dx++) {
+              for (let dz = -ring; dz <= ring; dz++) {
+                if (Math.abs(dx) !== ring && Math.abs(dz) !== ring)
+                  continue
+                const x = Math.floor(pos.x) + dx + 0.5
+                const z = Math.floor(pos.z) + dz + 0.5
+                const y = world._getSurfaceY(x, z)
+                if (!this._isWaterColumn(x, z) && this._canOccupyAt(x, z, y, 0.45)) {
+                  pos.x = x
+                  pos.z = z
+                  pos.y = y
+                  moved = true
+                  break
+                }
+              }
+              if (moved)
+                break
+            }
+            if (moved)
+              break
+          }
+        }
       }
 
       if (data.physics) {
@@ -259,8 +312,7 @@ export default class HubNpcSystem {
             animal.playWalk?.() || animal.playAnimation?.('Walk')
             const sp = Number.isFinite(stats.speed) ? stats.speed : 1.9
             const step = sp * dt
-            animal.group.position.x += nx * step
-            animal.group.position.z += nz * step
+            this._moveWithCollision(animal, nx * step, nz * step)
           }
           else {
             data.state = 'attack'
@@ -352,8 +404,7 @@ export default class HubNpcSystem {
         const nx = dx / Math.max(0.0001, dist)
         const nz = dz / Math.max(0.0001, dist)
         const speed = 2.05 * dt
-        pos.x += nx * speed
-        pos.z += nz * speed
+        this._moveWithCollision(animal, nx * speed, nz * speed)
         animal.group.rotation.y = Math.atan2(nx, nz)
         const groundY = world._getSurfaceY(pos.x, pos.z)
         animal.group.position.y += (groundY - animal.group.position.y) * 0.15
@@ -385,8 +436,7 @@ export default class HubNpcSystem {
         const nx = dx / Math.max(0.0001, dist)
         const nz = dz / Math.max(0.0001, dist)
         const speed = 2.15 * dt
-        pos.x += nx * speed
-        pos.z += nz * speed
+        this._moveWithCollision(animal, nx * speed, nz * speed)
         animal.group.rotation.y = Math.atan2(nx, nz)
         const groundY = world._getSurfaceY(pos.x, pos.z)
         animal.group.position.y += (groundY - animal.group.position.y) * 0.18
@@ -411,7 +461,16 @@ export default class HubNpcSystem {
           data.state = 'walk'
           data.timer = 2 + Math.random() * 3
           animal.playAnimation('Walk')
-          data.targetDir = Math.random() * Math.PI * 2
+          if (data.farmBounds) {
+            const pos = animal.group.position
+            const cx = data.farmBounds.centerX ?? ((data.farmBounds.minX + data.farmBounds.maxX) * 0.5)
+            const cz = data.farmBounds.centerZ ?? ((data.farmBounds.minZ + data.farmBounds.maxZ) * 0.5)
+            const base = Math.atan2(cx - pos.x, cz - pos.z)
+            data.targetDir = base + (Math.random() - 0.5) * 1.6
+          }
+          else {
+            data.targetDir = Math.random() * Math.PI * 2
+          }
           animal.group.rotation.y = data.targetDir
         }
         else {
@@ -423,7 +482,19 @@ export default class HubNpcSystem {
 
       if (data.state === 'walk') {
         const speed = 1.5 * dt
-        animal.group.translateZ(speed)
+        if (data.farmBounds && animal.group) {
+          const pos = animal.group.position
+          const b = data.farmBounds
+          const margin = 1.05
+          const out = pos.x < b.minX + margin || pos.x > b.maxX - margin || pos.z < b.minZ + margin || pos.z > b.maxZ - margin
+          if (out) {
+            const cx = b.centerX ?? ((b.minX + b.maxX) * 0.5)
+            const cz = b.centerZ ?? ((b.minZ + b.maxZ) * 0.5)
+            animal.group.rotation.y = Math.atan2(cx - pos.x, cz - pos.z)
+          }
+        }
+        const dir = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), animal.group.rotation.y)
+        this._moveWithCollision(animal, dir.x * speed, dir.z * speed)
 
         const pos = animal.group.position
         const groundY = world._getSurfaceY(pos.x, pos.z)
@@ -491,6 +562,82 @@ export default class HubNpcSystem {
     return best
   }
 
+  _canOccupyAt(x, z, y, radius = 0.45) {
+    const world = this.world
+    const cm = world?.chunkManager
+    if (!cm?.getBlockWorld)
+      return true
+    if (this._isWaterColumn(x, z))
+      return false
+    const emptyId = blocks.empty.id
+    const r = Math.max(0, Number(radius) || 0)
+    const samples = r > 0.01
+      ? [
+          { x, z },
+          { x: x + r, z },
+          { x: x - r, z },
+          { x, z: z + r },
+          { x, z: z - r },
+          { x: x + r, z: z + r },
+          { x: x + r, z: z - r },
+          { x: x - r, z: z + r },
+          { x: x - r, z: z - r },
+        ]
+      : [{ x, z }]
+    const baseY = Math.floor(Number.isFinite(Number(y)) ? y : 0) + 1
+    for (const s of samples) {
+      const ix = Math.floor(s.x)
+      const iz = Math.floor(s.z)
+      for (let dy = 0; dy <= 2; dy++) {
+        const b = cm.getBlockWorld(ix, baseY + dy, iz)
+        if (b?.id && b.id !== emptyId)
+          return false
+      }
+    }
+    return true
+  }
+
+  _isWaterColumn(x, z) {
+    const world = this.world
+    const cm = world?.chunkManager
+    if (!cm?.getTopSolidYWorld)
+      return false
+    const topY = cm.getTopSolidYWorld(x, z)
+    if (!Number.isFinite(Number(topY)))
+      return false
+    const waterOffset = cm?.waterParams?.waterOffset ?? 8
+    const heightScale = cm?.renderParams?.heightScale ?? 1
+    const waterY = waterOffset * heightScale
+    return Number(topY) < waterY
+  }
+
+  _moveWithCollision(entity, dx, dz) {
+    const world = this.world
+    if (!entity?.group || !world)
+      return
+    const pos = entity.group.position
+    const r = Math.min(0.6, Math.max(0.25, (Number(entity.hitRadius) || 0.55) * 0.55))
+    const nextX = pos.x + dx
+    const nextZ = pos.z + dz
+    const y = world._getSurfaceY(nextX, nextZ)
+    if (this._canOccupyAt(nextX, nextZ, y, r)) {
+      pos.x = nextX
+      pos.z = nextZ
+      pos.y += (y - pos.y) * 0.25
+      return
+    }
+    const yx = world._getSurfaceY(nextX, pos.z)
+    if (this._canOccupyAt(nextX, pos.z, yx, r)) {
+      pos.x = nextX
+      pos.y += (yx - pos.y) * 0.25
+    }
+    const yz = world._getSurfaceY(pos.x, nextZ)
+    if (this._canOccupyAt(pos.x, nextZ, yz, r)) {
+      pos.z = nextZ
+      pos.y += (yz - pos.y) * 0.25
+    }
+  }
+
   toggleCarryAnimal() {
     const world = this.world
     if (!world || world.isPaused)
@@ -511,6 +658,7 @@ export default class HubNpcSystem {
     world._carriedAnimal.behavior.timer = 0
     world._carriedAnimal.behavior.physics = null
     world._carriedAnimal.playAnimation?.('Idle')
+    world.player?.setCarryPoseEnabled?.(true)
     world._emitInventorySummary()
   }
 
@@ -532,6 +680,7 @@ export default class HubNpcSystem {
     animal.group.position.set(p.x + fx * 1.4, p.y + 0.6, p.z + fz * 1.4)
     const groundY = world._getSurfaceY(animal.group.position.x, animal.group.position.z)
     animal.group.position.y = groundY
+    world.player?.setCarryPoseEnabled?.(false)
     world._emitInventorySummary()
   }
 
@@ -557,10 +706,12 @@ export default class HubNpcSystem {
     camera.getWorldDirection(dir)
     dir.normalize()
 
-    const camPos = new THREE.Vector3()
-    camera.getWorldPosition(camPos)
-    const start = camPos.clone().add(dir.clone().multiplyScalar(2.1))
-    start.y -= 0.65
+    const camRight = new THREE.Vector3().crossVectors(dir, new THREE.Vector3(0, 1, 0)).normalize()
+    const p = world.player.getPosition()
+    const start = new THREE.Vector3(p.x, p.y, p.z)
+      .add(camRight.multiplyScalar(-0.85))
+      .add(new THREE.Vector3(0, 1.65, 0))
+      .add(new THREE.Vector3(dir.x, 0, dir.z).normalize().multiplyScalar(0.35))
     const groundY = world._getSurfaceY(start.x, start.z) + 0.25
     if (start.y < groundY)
       start.y = groundY
@@ -589,6 +740,7 @@ export default class HubNpcSystem {
     animal.group.rotation.x = 0
     animal.group.rotation.z = 0
     animal.playAnimation?.('Idle')
+    world.player?.setCarryPoseEnabled?.(false)
     world._emitInventorySummary()
   }
 }

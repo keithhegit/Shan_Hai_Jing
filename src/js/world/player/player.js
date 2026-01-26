@@ -73,6 +73,7 @@ export default class Player {
     this._matterGunMuzzle = null
     this._isMatterGunAiming = false
     this._wantsMatterGunEquipped = false
+    this._carryPoseEnabled = false
     this._controlLocked = false
     this._sprintDisabled = false
 
@@ -582,10 +583,15 @@ export default class Player {
       && !isCombat
       && !isBlockingAction
 
-    if (shouldStaticPose)
+    if (this._carryPoseEnabled && this._waveClipName && this.movement.isGrounded && !isBlockingAction) {
+      this.animation.setStaticPoseAt(this._waveClipName, 0.55, 0.95)
+    }
+    else if (shouldStaticPose) {
       this.animation.setStaticPose(poseClipName, this._isMatterGunAiming ? 1 : (isMoving ? 0.25 : 0.85))
-    else
+    }
+    else {
       this.animation.clearStaticPose()
+    }
 
     // ===== 平滑转向 =====
     if (Math.abs(this.config.facingAngle - this.targetFacingAngle) > 0.0001) {
@@ -612,6 +618,10 @@ export default class Player {
 
     // ==================== 速度线控制 ====================
     this.updateSpeedLines(resolvedInput)
+  }
+
+  setCarryPoseEnabled(enabled) {
+    this._carryPoseEnabled = !!enabled
   }
 
   /**
@@ -863,9 +873,40 @@ export default class Player {
     this._invulnerableUntil = (this.time?.elapsed ?? 0) + 650
   }
 
-  die() {
+  die(options = null) {
+    if (this.isDead)
+      return
     this.isDead = true
-    // 播放死亡动画 (TODO)
+    this.isBlocking = false
+    this.setControlLocked(true)
+    this.setSprintDisabled(true)
+
+    const world = this.experience?.world || null
+    const reason = typeof options === 'object' && options !== null && options.reason ? String(options.reason) : 'death'
+
+    if (world?.currentWorld === 'dungeon') {
+      const actions = this.animation?.actions ? Object.keys(this.animation.actions) : []
+      const lowered = actions.map(name => ({ name, lower: String(name).toLowerCase() }))
+      const death = lowered.find(row => row.lower.includes('death')) || lowered.find(row => row.lower.includes('die')) || null
+      const now = this.time?.elapsed ?? 0
+      let delayMs = 1400
+      if (death?.name) {
+        this.animation?.playAction?.(death.name, 0.08)
+        const action = this.animation?.actions?.[death.name] || null
+        if (action?.setEffectiveTimeScale)
+          action.setEffectiveTimeScale(0.2)
+        const clipDur = action?.getClip?.()?.duration
+        if (Number.isFinite(Number(clipDur)))
+          delayMs = Math.max(900, Math.min(2600, (Number(clipDur) * 1000) / 0.2))
+      }
+      this._deathCinematicUntil = now + delayMs
+      emitter.emit('game:pause')
+      setTimeout(() => {
+        world?._openDungeonDeathUi?.(reason)
+      }, delayMs)
+      return
+    }
+
     emitter.emit('ui:show_cta', {
       title: 'YOU DIED',
       message: '胜败乃兵家常事，大侠请重新来过。',

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import CameraRig from '../camera/camera-rig.js'
-import { CHUNK_BASIC_CONFIG, TERRAIN_PARAMS } from '../config/chunk-config.js'
+import { CHUNK_BASIC_CONFIG, TERRAIN_PARAMS, TREE_PARAMS } from '../config/chunk-config.js'
 import Experience from '../experience.js'
 // import BlockRaycaster from '../interaction/block-raycaster.js'
 // import BlockSelectionHelper from '../interaction/block-selection-helper.js'
@@ -11,19 +11,22 @@ import HumanoidEnemy from './enemies/humanoid-enemy.js'
 import Environment from './environment.js'
 import Player from './player/player.js'
 import BeamsSystem from './systems/beams-system.js'
+import BuildSystem from './systems/build-system.js'
 import CaptureSystem from './systems/capture-system.js'
 import CombatSystem from './systems/combat-system.js'
 import DropSystem from './systems/drop-system.js'
 import DungeonEnemySystem from './systems/dungeon-enemy-system.js'
 import DungeonSystem from './systems/dungeon-system.js'
+import FarmSystem from './systems/farm-system.js'
 import HubNpcSystem from './systems/hub-npc-system.js'
 import InteractableSystem from './systems/interactable-system.js'
 import InventorySystem from './systems/inventory-system.js'
 import LockedChestSystem from './systems/locked-chest-system.js'
+import MerchantSystem from './systems/merchant-system.js'
 import PortalSystem from './systems/portal-system.js'
 import SystemManager from './systems/system-manager.js'
 import createWorldContext from './systems/world-context.js'
-import { blocks } from './terrain/blocks-config.js'
+import { blocks, PLANT_IDS } from './terrain/blocks-config.js'
 import ChunkManager from './terrain/chunk-manager.js'
 
 export default class World {
@@ -48,6 +51,7 @@ export default class World {
     this._dungeonSurfaceY = null
     this._dungeonSpawn = null
     this._portalDungeonProgress = this._loadPortalDungeonProgress()
+    this._portalUnlocks = this._loadPortalUnlocks()
     this._activeDungeonExit = null
     this._activeDungeonExitPrompt = null
     this._dungeonEnemies = null
@@ -59,6 +63,11 @@ export default class World {
     // this._dungeonCollisionInfo = null // Deprecated
     // this._dungeonCollisionProvider = ... // Deprecated
     this._blockDungeonGenerator = null
+    this._mineOres = null
+    this._mineOreInteractables = null
+    this._miningState = null
+    this._miningPickaxe = null
+    this._equippedBuildItemId = null
 
     this._hubCenter = { x: 0, z: 0 }
     this._savedRespawnPosition = null
@@ -105,6 +114,7 @@ export default class World {
     this._armedCanisterThrow = null
     this._selectedInventoryItemId = null
     this._selectedCanisterItemId = null
+    this._selectedCanisterMetaIndex = null
     this._hubAutomation = null
     this._hubAutomationGroup = null
     this._hubDrops = []
@@ -155,17 +165,191 @@ export default class World {
     this._systemManager.register(this.dungeonEnemySystem)
     this.hubNpcSystem = new HubNpcSystem()
     this._systemManager.register(this.hubNpcSystem)
+    this.buildSystem = new BuildSystem()
+    this._systemManager.register(this.buildSystem)
+    this.farmSystem = new FarmSystem()
+    this._systemManager.register(this.farmSystem)
+    this.merchantSystem = new MerchantSystem()
+    this._systemManager.register(this.merchantSystem)
     this.dropSystem = new DropSystem()
     this._systemManager.register(this.dropSystem)
     this.captureSystem = new CaptureSystem()
     this._systemManager.register(this.captureSystem)
 
     emitter.on('core:ready', () => {
+      const hubX = Math.floor((CHUNK_BASIC_CONFIG.chunkWidth ?? 64) / 2)
+      const hubZ = Math.floor((CHUNK_BASIC_CONFIG.chunkWidth ?? 64) / 2)
+      this._hubCenter = { x: hubX, z: hubZ }
+      const warehouseX = hubX + 12
+      const warehouseZ = hubZ + 3
+      this._hubWarehousePos = { x: warehouseX, z: warehouseZ }
+
+      const dungeonTargets = {
+        forest: { x: hubX, z: hubZ - 64 },
+        plains: { x: hubX + 64, z: hubZ },
+        snow: { x: hubX, z: hubZ + 64 },
+        desert: { x: hubX - 64, z: hubZ },
+        mine: { x: hubX + 64, z: hubZ + 64 },
+        hellfire: { x: hubX - 64, z: hubZ + 64 },
+      }
+
       this.chunkManager = new ChunkManager({
         chunkWidth: CHUNK_BASIC_CONFIG.chunkWidth,
         chunkHeight: CHUNK_BASIC_CONFIG.chunkHeight,
         viewDistance: CHUNK_BASIC_CONFIG.viewDistance, // 3×3
         seed: 1265, // 使用自定义 seed，覆盖默认值
+        scenery: {
+          hubCenter: { x: hubX, z: hubZ },
+          coreRadius: 120,
+          zones: [
+            { ...dungeonTargets.forest, radius: 72, biomeId: 'forest' },
+            { ...dungeonTargets.plains, radius: 72, biomeId: 'grassHills' },
+            { ...dungeonTargets.snow, radius: 80, biomeId: 'snowMountains' },
+            { ...dungeonTargets.desert, radius: 72, biomeId: 'badlands' },
+            { ...dungeonTargets.mine, radius: 80, biomeId: 'mine' },
+            { ...dungeonTargets.hellfire, radius: 76, biomeId: 'deadlands' },
+          ],
+          sectors: [
+            { minR: 120, angleMin: Math.PI / 4, angleMax: (3 * Math.PI) / 4, biomeId: 'snowMountains' },
+            { minR: 120, angleMin: (7 * Math.PI) / 4, angleMax: Math.PI / 4, biomeId: 'mine' },
+            { minR: 120, angleMin: (3 * Math.PI) / 4, angleMax: (5 * Math.PI) / 4, biomeId: 'grassHills' },
+            { minR: 120, angleMin: (5 * Math.PI) / 4, angleMax: (7 * Math.PI) / 4, biomeId: 'deadlands' },
+          ],
+        },
+        trees: {
+          ...TREE_PARAMS,
+          useModels: true,
+          modelPoolsByBiome: {
+            grassHills: [
+              { url: 'models/Environment/Tree_1.gltf', weight: 3.2, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_2.gltf', weight: 3.2, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_3.gltf', weight: 2.4, desiredHeight: 6.6, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_4.gltf', weight: 2.4, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_Fruit.gltf', weight: 1.7, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Bamboo_Small.gltf', weight: 1.1, desiredHeight: 2.1, colliderRadius: 0.25, colliderHeight: 3 },
+              { url: 'models/Environment/Bamboo_Mid.gltf', weight: 1.0, desiredHeight: 2.7, colliderRadius: 0.25, colliderHeight: 3 },
+              { url: 'models/Environment/with_entity/Bush_1_A_Color1.gltf', weight: 0.9, desiredHeight: 1.35, colliderRadius: 1.2, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Bush_2_A_Color1.gltf', weight: 0.8, desiredHeight: 1.45, colliderRadius: 1.25, colliderHeight: 2 },
+            ],
+            forest: [
+              { url: 'models/Environment/Tree_1.gltf', weight: 3.0, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_2.gltf', weight: 3.0, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_3.gltf', weight: 2.4, desiredHeight: 6.6, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_4.gltf', weight: 2.4, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Tree_Fruit.gltf', weight: 1.4, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+              { url: 'models/Environment/Bamboo_Small.gltf', weight: 1.0, desiredHeight: 2.1, colliderRadius: 0.25, colliderHeight: 3 },
+              { url: 'models/Environment/Bamboo_Mid.gltf', weight: 0.9, desiredHeight: 2.7, colliderRadius: 0.25, colliderHeight: 3 },
+              { url: 'models/Environment/with_entity/Bush_1_A_Color1.gltf', weight: 1.0, desiredHeight: 1.35, colliderRadius: 1.2, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Bush_2_A_Color1.gltf', weight: 0.9, desiredHeight: 1.45, colliderRadius: 1.25, colliderHeight: 2 },
+            ],
+            mine: [
+              { modelKey: 'cube_coal', weight: 2.0, desiredHeight: 1.1, colliderRadius: 0.7, colliderHeight: 2 },
+              { modelKey: 'cube_diamond', weight: 0.8, desiredHeight: 1.0, colliderRadius: 0.7, colliderHeight: 2 },
+              { modelKey: 'cube_bricks_dark', weight: 0.7, desiredHeight: 1.2, colliderRadius: 0.8, colliderHeight: 2 },
+              { url: 'models/Environment/Rock1.gltf', weight: 1.2, desiredHeight: 1.1, colliderRadius: 1.05, colliderHeight: 2 },
+              { url: 'models/Environment/Rock2.gltf', weight: 1.0, desiredHeight: 1.15, colliderRadius: 1.1, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Rock_1_A_Color1.gltf', weight: 1.3, desiredHeight: 1.1, colliderRadius: 1.1, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Rock_2_A_Color1.gltf', weight: 1.1, desiredHeight: 1.2, colliderRadius: 1.15, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Bush_1_A_Color1.gltf', weight: 0.6, desiredHeight: 1.35, colliderRadius: 1.2, colliderHeight: 2 },
+            ],
+            deadlands: [
+              { url: 'models/Environment/DeadTree_1.gltf', weight: 2.0, desiredHeight: 3.6, colliderRadius: 0.35, colliderHeight: 3 },
+              { url: 'models/Environment/DeadTree_2.gltf', weight: 1.7, desiredHeight: 4.2, colliderRadius: 0.35, colliderHeight: 3 },
+              { url: 'models/Environment/DeadTree_3.gltf', weight: 1.8, desiredHeight: 4.6, colliderRadius: 0.35, colliderHeight: 3 },
+              { url: 'models/Environment/Mushroom.gltf', weight: 1.6, desiredHeight: 1.1, colliderRadius: 0.25, colliderHeight: 2 },
+              { modelKey: 'cube_exclamation', weight: 0.18, desiredHeight: 1.35, colliderRadius: 0.7, colliderHeight: 2 },
+              { modelKey: 'cube_question_mark', weight: 0.12, desiredHeight: 1.35, colliderRadius: 0.7, colliderHeight: 2 },
+              { modelKey: 'cube_coal', weight: 0.8, desiredHeight: 1.1, colliderRadius: 0.7, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Rock_1_B_Color1.gltf', weight: 0.8, desiredHeight: 1.1, colliderRadius: 1.1, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Rock_2_B_Color1.gltf', weight: 0.7, desiredHeight: 1.2, colliderRadius: 1.15, colliderHeight: 2 },
+            ],
+            snowMountains: [
+              { url: 'models/Environment/DeadTree_1.gltf', weight: 0.6, desiredHeight: 3.6, colliderRadius: 0.35, colliderHeight: 3 },
+              { url: 'models/Environment/DeadTree_2.gltf', weight: 0.5, desiredHeight: 4.2, colliderRadius: 0.35, colliderHeight: 3 },
+              { url: 'models/Environment/with_entity/Rock_1_A_Color1.gltf', weight: 1.2, desiredHeight: 1.1, colliderRadius: 1.1, colliderHeight: 2 },
+              { url: 'models/Environment/with_entity/Rock_2_A_Color1.gltf', weight: 1.0, desiredHeight: 1.2, colliderRadius: 1.15, colliderHeight: 2 },
+            ],
+          },
+          modelPool: [
+            { url: 'models/Environment/Tree_1.gltf', weight: 2.0, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/Tree_2.gltf', weight: 2.0, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/Tree_3.gltf', weight: 1.6, desiredHeight: 6.6, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/Tree_4.gltf', weight: 1.6, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/Tree_Fruit.gltf', weight: 1.2, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/Bamboo_Small.gltf', weight: 1.0, desiredHeight: 2.1, colliderRadius: 0.25, colliderHeight: 3 },
+            { url: 'models/Environment/Bamboo_Mid.gltf', weight: 0.9, desiredHeight: 2.7, colliderRadius: 0.25, colliderHeight: 3 },
+            { url: 'models/Environment/Rock1.gltf', weight: 0.7, desiredHeight: 1.1, colliderRadius: 1.05, colliderHeight: 2 },
+            { url: 'models/Environment/Rock2.gltf', weight: 0.6, desiredHeight: 1.15, colliderRadius: 1.1, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Tree_1_A_Color1.gltf', weight: 0.7, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/with_entity/Tree_2_A_Color1.gltf', weight: 0.7, desiredHeight: 6.2, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/with_entity/Tree_4_A_Color1.gltf', weight: 0.7, desiredHeight: 6.5, colliderRadius: 0.4, colliderHeight: 4 },
+            { url: 'models/Environment/with_entity/Bush_1_A_Color1.gltf', weight: 1.6, desiredHeight: 1.35, colliderRadius: 1.2, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Bush_1_B_Color1.gltf', weight: 1.4, desiredHeight: 1.35, colliderRadius: 1.2, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Bush_2_A_Color1.gltf', weight: 1.4, desiredHeight: 1.45, colliderRadius: 1.25, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Bush_2_B_Color1.gltf', weight: 1.2, desiredHeight: 1.45, colliderRadius: 1.25, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Rock_1_A_Color1.gltf', weight: 1.0, desiredHeight: 1.1, colliderRadius: 1.1, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Rock_1_B_Color1.gltf', weight: 0.9, desiredHeight: 1.1, colliderRadius: 1.1, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Rock_2_A_Color1.gltf', weight: 0.8, desiredHeight: 1.2, colliderRadius: 1.15, colliderHeight: 2 },
+            { url: 'models/Environment/with_entity/Rock_2_B_Color1.gltf', weight: 0.7, desiredHeight: 1.2, colliderRadius: 1.15, colliderHeight: 2 },
+          ],
+          exclusionZones: [
+            { x: warehouseX, z: warehouseZ, radius: 8 },
+          ],
+        },
+        plants: {
+          useModels: true,
+          densityScale: 0.42,
+          desiredHeight: 0.78,
+          yOffset: 0.02,
+          castShadow: false,
+          poolsByPlantId: {
+            [String(PLANT_IDS.SHORT_GRASS)]: [
+              { url: 'models/Environment/Grass_Small.gltf', weight: 3 },
+              { url: 'models/Environment/Grass_Big.gltf', weight: 1.2 },
+              { url: 'models/Environment/no_entity/Grass_1_A_Color1.gltf', weight: 2 },
+              { url: 'models/Environment/no_entity/Grass_1_B_Color1.gltf', weight: 2 },
+              { url: 'models/Environment/no_entity/Grass_2_A_Color1.gltf', weight: 2 },
+              { url: 'models/Environment/no_entity/Grass_2_B_Color1.gltf', weight: 2 },
+            ],
+            [String(PLANT_IDS.SHORT_DRY_GRASS)]: [
+              { url: 'models/Environment/Grass_Small.gltf', weight: 2 },
+              { url: 'models/Environment/no_entity/Grass_1_C_Color1.gltf', weight: 2 },
+              { url: 'models/Environment/no_entity/Grass_2_C_Color1.gltf', weight: 2 },
+            ],
+            [String(PLANT_IDS.DANDELION)]: [
+              { url: 'models/Environment/Flowers_1.gltf', weight: 2.5 },
+              { url: 'models/Environment/Flowers_2.gltf', weight: 2.5 },
+              { url: 'models/Environment/Plant_2.gltf', weight: 1.5 },
+              { url: 'models/Environment/Plant_3.gltf', weight: 1.5 },
+            ],
+            [String(PLANT_IDS.POPPY)]: [
+              { url: 'models/Environment/Flowers_1.gltf', weight: 2.5 },
+              { url: 'models/Environment/Flowers_2.gltf', weight: 2.5 },
+              { url: 'models/Environment/Plant_2.gltf', weight: 1.5 },
+              { url: 'models/Environment/Plant_3.gltf', weight: 1.5 },
+            ],
+            [String(PLANT_IDS.OXEYE_DAISY)]: [
+              { url: 'models/Environment/Flowers_1.gltf', weight: 2.5 },
+              { url: 'models/Environment/Flowers_2.gltf', weight: 2.5 },
+              { url: 'models/Environment/Plant_2.gltf', weight: 1.5 },
+              { url: 'models/Environment/Plant_3.gltf', weight: 1.5 },
+            ],
+            [String(PLANT_IDS.ALLIUM)]: [
+              { url: 'models/Environment/Flowers_2.gltf', weight: 3 },
+              { url: 'models/Environment/Plant_3.gltf', weight: 2 },
+            ],
+            [String(PLANT_IDS.PINK_TULIP)]: [
+              { url: 'models/Environment/Flowers_2.gltf', weight: 3 },
+              { url: 'models/Environment/Plant_2.gltf', weight: 2 },
+            ],
+            [String(PLANT_IDS.DEAD_BUSH)]: [
+              { url: 'models/Environment/Bush.gltf', weight: 1 },
+            ],
+          },
+          defaultPool: [
+            { url: 'models/Environment/Grass_Small.gltf', weight: 1 },
+          ],
+        },
         terrain: {
           scale: TERRAIN_PARAMS.scale,
           magnitude: TERRAIN_PARAMS.magnitude,
@@ -215,6 +399,8 @@ export default class World {
 
       // ===== 交互事件绑定：删除/新增方块 =====
       this._onMouseDown = (event) => {
+        if (this.buildSystem?.handleMouseDown?.(event))
+          return
         if (event.button === 2) {
           if (!this.isPaused && this._armedCanisterThrow) {
             const ok = this._throwArmedCanister()
@@ -245,14 +431,12 @@ export default class World {
       this._activePortalId = null
       this._activePortal = null
 
-      const hubX = Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
-      const hubZ = Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
-      this._hubCenter = { x: hubX, z: hubZ }
-
       this._initPortals()
       this._initInteractables()
       this._initHubAutomation()
       this._initAnimals()
+      this.chunkManager?.removeTreesInWorldRadius?.(warehouseX, warehouseZ, 8)
+      this.chunkManager?.removePlantsInWorldRadius?.(warehouseX, warehouseZ, 8)
 
       this._onPause = () => {
         this.isPaused = true
@@ -295,6 +479,15 @@ export default class World {
       this._onInventoryEquip = (payload) => {
         this._equipInventoryItem(payload)
       }
+      this._onWarehouseGridPlace = (payload) => {
+        this.inventorySystem?.placeWarehouseGridItem?.(payload)
+      }
+      this._onBuildExit = () => {
+        this._exitBuildMode?.()
+      }
+      this._onShopSell = (payload) => {
+        this._sellToMerchant?.(payload)
+      }
       this._onPetRecharge = (payload) => {
         this._rechargeCanister(payload)
       }
@@ -309,13 +502,24 @@ export default class World {
       }
       this._onGrabPet = () => {
         const canisterId = this._selectedCanisterItemId
+        const metaIndex = this._selectedCanisterMetaIndex
         const count = canisterId ? (this._inventory?.backpack?.items?.[canisterId] || 0) : 0
         if (!this.isPaused && canisterId && count > 0) {
-          const ok = this._armCanisterThrow(canisterId)
+          const meta = Number.isFinite(Number(metaIndex))
+            ? (this.inventorySystem?.inventory?.canisterMeta?.[canisterId]?.[Math.max(0, Math.floor(Number(metaIndex)))] || null)
+            : (this.inventorySystem?.peekCanisterMeta?.(canisterId) || null)
+          if (meta?.exhausted) {
+            emitter.emit('dungeon:toast', { text: '该灵宠精疲力竭：需要 1 灵兽补充剂充能' })
+            return
+          }
+          const ok = this._armCanisterThrow(canisterId, metaIndex)
           if (ok) {
             const label = this._getModelFilenameByResourceKey?.(canisterId) || canisterId
             emitter.emit('ui:log', { text: `已举起：${label}（右键投掷）` })
             emitter.emit('dungeon:toast', { text: `已举起：${label}（右键投掷）` })
+          }
+          else {
+            emitter.emit('dungeon:toast', { text: '收容罐不可用' })
           }
           return
         }
@@ -323,8 +527,10 @@ export default class World {
       }
       this._onInventorySelect = (payload) => {
         const itemId = payload?.itemId ? String(payload.itemId) : null
+        const metaIndex = Number.isFinite(Number(payload?.metaIndex)) ? Math.max(0, Math.floor(Number(payload.metaIndex))) : null
         this._selectedInventoryItemId = itemId
         this._selectedCanisterItemId = itemId && itemId.startsWith('canister_') ? itemId : null
+        this._selectedCanisterMetaIndex = this._selectedCanisterItemId ? metaIndex : null
       }
 
       emitter.on('input:toggle_backpack', this._onToggleBackpack)
@@ -333,11 +539,54 @@ export default class World {
       emitter.on('inventory:transfer', this._onInventoryTransfer)
       emitter.on('inventory:equip', this._onInventoryEquip)
       emitter.on('inventory:grid_place', this._onInventoryGridPlace)
+      emitter.on('inventory:warehouse_grid_place', this._onWarehouseGridPlace)
       emitter.on('inventory:drop', this._onInventoryDrop)
       emitter.on('inventory:warehouse_page', this._onWarehousePage)
       emitter.on('inventory:select', this._onInventorySelect)
+      emitter.on('build:exit', this._onBuildExit)
+      emitter.on('shop:sell', this._onShopSell)
       emitter.on('input:grab_pet', this._onGrabPet)
       emitter.on('pet:recharge', this._onPetRecharge)
+
+      this._onDungeonExtractionAction = (payload) => {
+        const action = payload?.action
+        if (action === 'cancel') {
+          this.isPaused = false
+          this._emitDungeonState()
+          return
+        }
+        if (action === 'extract') {
+          this._exitDungeon()
+          return
+        }
+        if (action === 'restart') {
+          this._restartDungeonRun()
+        }
+      }
+      this._onDungeonDeathAction = (payload) => {
+        const action = payload?.action
+        if (!action)
+          return
+        if (action === 'respawn_noloss') {
+          const ok = this._consumeReviveItem()
+          if (!ok)
+            this._wipeBackpackKeepTool()
+        }
+        else if (action === 'respawn_lossy') {
+          this._wipeBackpackKeepTool()
+        }
+        else if (action === 'restart') {
+          this._restartDungeonRun()
+          return
+        }
+        emitter.emit('dungeon:death_close_ui')
+        this.experience.camera?.switchMode?.(this.experience.camera?.cameraModes?.THIRD_PERSON)
+        this.player?.setControlLocked?.(false)
+        this.player?.setSprintDisabled?.(false)
+        this.player?.respawn?.()
+      }
+      emitter.on('dungeon:extraction_action', this._onDungeonExtractionAction)
+      emitter.on('dungeon:death_action', this._onDungeonDeathAction)
 
       this._ensureStarterMatterGun()
       this._emitInventorySummary()
@@ -354,7 +603,7 @@ export default class World {
       animal_horse: { hp: 6, damage: 2, speed: 2.35, aggroRadius: 9, attackRange: 2.15, windupMs: 260 },
       animal_wolf: { hp: 8, damage: 3, speed: 2.45, aggroRadius: 10, attackRange: 2.25, windupMs: 240 },
       enemy_default: { hp: 4, damage: 1, speed: 1.35, aggroRadius: 9, attackRange: 2.1, windupMs: 260 },
-      material_gun: { tickMs: 900, tickDamage: 1, maxRange: 24 },
+      material_gun: { tickMs: 900, tickDamage: 1, maxRange: 14 },
     }
   }
 
@@ -606,13 +855,38 @@ export default class World {
   _equipInventoryItem(payload) {
     const itemId = payload?.itemId
     const id = itemId ? String(itemId) : ''
-    if (id !== 'material_gun' && !id.startsWith('canister_'))
+    const isBuild = id === 'Fence_Center' || id === 'Fence_Corner'
+    if (!isBuild && id !== 'material_gun' && !id.startsWith('canister_'))
       return
     const items = this._getBagItems('backpack')
     const count = Math.max(0, Math.floor(Number(items?.[id]) || 0))
     if (count <= 0) {
-      emitter.emit('dungeon:toast', { text: id === 'material_gun' ? '背包里没有物质枪' : '背包里没有收容罐' })
+      emitter.emit('dungeon:toast', { text: id === 'material_gun' ? '背包里没有灵兽石' : (isBuild ? '背包里没有 Fence 道具' : '背包里没有收容罐') })
       return
+    }
+
+    if (isBuild) {
+      const next = this._equippedBuildItemId === id ? null : id
+      this._equippedBuildItemId = next
+      if (this._isMaterialGunEquipped) {
+        this._isMaterialGunEquipped = false
+        this.player?.setMatterGunEquipped?.(false)
+        this._stopMaterialGunFire()
+      }
+      if (next) {
+        emitter.emit('build:equip', { itemId: next })
+        emitter.emit('dungeon:toast', { text: next === 'Fence_Corner' ? '建造：Fence_Corner' : '建造：Fence_Center' })
+      }
+      else {
+        emitter.emit('build:clear')
+        emitter.emit('dungeon:toast', { text: '已退出建造模式' })
+      }
+      return
+    }
+
+    if (this._equippedBuildItemId) {
+      this._equippedBuildItemId = null
+      emitter.emit('build:clear')
     }
 
     if (id === 'material_gun') {
@@ -621,7 +895,7 @@ export default class World {
       this.player?.setMatterGunEquipped?.(next)
       if (!next)
         this._stopMaterialGunFire()
-      emitter.emit('dungeon:toast', { text: next ? '已装备物质枪' : '已收起物质枪' })
+      emitter.emit('dungeon:toast', { text: next ? '已装备灵兽石' : '已收起灵兽石' })
       return
     }
 
@@ -630,7 +904,7 @@ export default class World {
       ? (this.inventorySystem?.inventory?.canisterMeta?.[id]?.[Math.max(0, Math.floor(Number(metaIndex)))] || null)
       : (this.inventorySystem?.peekCanisterMeta?.(id) || null)
     if (meta?.exhausted) {
-      emitter.emit('dungeon:toast', { text: '该灵宠精疲力竭：需要 1 金币充能' })
+      emitter.emit('dungeon:toast', { text: '该灵宠精疲力竭：需要 1 灵兽补充剂充能' })
       return
     }
 
@@ -646,14 +920,102 @@ export default class World {
     emitter.emit('dungeon:toast', { text: `已抱起：${label}（右键投掷）` })
   }
 
+  _exitBuildMode() {
+    const items = this._getBagItems('backpack')
+    const center = Math.max(0, Math.floor(Number(items?.Fence_Center) || 0))
+    const corner = Math.max(0, Math.floor(Number(items?.Fence_Corner) || 0))
+    const legacy = Math.max(0, Math.floor(Number(items?.fence) || 0))
+    if (center > 0)
+      this._removeInventoryItem('backpack', 'Fence_Center', center)
+    if (corner > 0)
+      this._removeInventoryItem('backpack', 'Fence_Corner', corner)
+    if (legacy > 0)
+      this._removeInventoryItem('backpack', 'fence', legacy)
+
+    this._equippedBuildItemId = null
+    emitter.emit('build:clear')
+
+    this._ensureStarterMatterGun?.()
+    const nextItems = this._getBagItems('backpack')
+    if (Math.max(0, Math.floor(Number(nextItems?.material_gun) || 0)) > 0) {
+      this._isMaterialGunEquipped = true
+      this.player?.setMatterGunEquipped?.(true)
+    }
+    this._emitInventorySummary?.()
+    this._emitInventoryState?.()
+    this._scheduleInventorySave?.()
+    emitter.emit('dungeon:toast', { text: '已退出建造模式' })
+  }
+
+  _sellToMerchant(payload) {
+    const id = payload?.itemId ? String(payload.itemId) : ''
+    const metaIndex = payload?.metaIndex ?? null
+    if (!id)
+      return
+    if (this.currentWorld !== 'hub')
+      return
+
+    let price = 0
+    if (id.startsWith('canister_')) {
+      const list = this.inventorySystem?.inventory?.canisterMeta?.[id]
+      const idx = Number.isFinite(Number(metaIndex)) ? Math.max(0, Math.floor(Number(metaIndex))) : null
+      const meta = idx === null ? (Array.isArray(list) ? list[0] : null) : (Array.isArray(list) ? list[idx] : null)
+      if (!meta) {
+        emitter.emit('dungeon:toast', { text: '无法卖出：收容罐状态异常' })
+        return
+      }
+      if (meta.exhausted)
+        price = 1
+      else if (id === 'canister_large')
+        price = 3
+      else if (id === 'canister_medium')
+        price = 2
+      else
+        price = 1
+      this.inventorySystem?.consumeCanisterMeta?.(id, idx)
+      const ok = this.inventorySystem?.removeItem?.('backpack', id, 1)
+      if (!ok)
+        return
+    }
+    else if (id === 'Pickaxe_Wood' || id.startsWith('Pickaxe_')) {
+      price = 3
+      const ok = this.inventorySystem?.removeItem?.('backpack', id, 1)
+      if (!ok)
+        return
+    }
+    else if (id.startsWith('Axe_')) {
+      price = 3
+      const ok = this.inventorySystem?.removeItem?.('backpack', id, 1)
+      if (!ok)
+        return
+    }
+    else if (id === 'crystal_small' || id.startsWith('key_')) {
+      emitter.emit('dungeon:toast', { text: '不可卖出该道具' })
+      return
+    }
+    else {
+      emitter.emit('dungeon:toast', { text: '不可卖出该道具' })
+      return
+    }
+
+    if (price <= 0) {
+      emitter.emit('dungeon:toast', { text: '不可卖出该道具' })
+      return
+    }
+
+    this.inventorySystem?.addItem?.('backpack', 'coin', price)
+    const label = this._getModelFilenameByResourceKey?.(id) || id
+    emitter.emit('dungeon:toast', { text: `已卖出：${label} +${price} Gold` })
+  }
+
   _rechargeCanister(payload) {
     const itemId = payload?.itemId ? String(payload.itemId) : ''
     const metaIndex = payload?.metaIndex ?? null
     if (!itemId.startsWith('canister_'))
       return
-    const coins = Math.max(0, Math.floor(Number(this._inventory?.backpack?.items?.coin) || 0))
-    if (coins <= 0) {
-      emitter.emit('dungeon:toast', { text: '金币不足：需要 1 金币充能' })
+    const potions = Math.max(0, Math.floor(Number(this._inventory?.backpack?.items?.pet_potion) || 0))
+    if (potions <= 0) {
+      emitter.emit('dungeon:toast', { text: '没有足够的灵兽补充剂' })
       return
     }
     const ok = this.inventorySystem?.rechargeCanisterMeta?.(itemId, metaIndex)
@@ -661,7 +1023,7 @@ export default class World {
       emitter.emit('dungeon:toast', { text: '无法充能：收容罐状态异常' })
       return
     }
-    this._removeInventoryItem('backpack', 'coin', 1)
+    this._removeInventoryItem('backpack', 'pet_potion', 1)
     emitter.emit('dungeon:toast', { text: '已充能：收容罐恢复可投掷' })
     this._emitInventorySummary?.()
     this._emitInventoryState?.()
@@ -781,6 +1143,36 @@ export default class World {
     }
     catch {
       return {}
+    }
+  }
+
+  _loadPortalUnlocks() {
+    try {
+      if (typeof window === 'undefined')
+        return { mine: false, hellfire: false }
+      const raw = window.localStorage?.getItem?.('mmmc:portal_unlocks_v1')
+      if (!raw)
+        return { mine: false, hellfire: false }
+      const parsed = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object')
+        return { mine: false, hellfire: false }
+      return {
+        mine: !!parsed.mine,
+        hellfire: !!parsed.hellfire,
+      }
+    }
+    catch {
+      return { mine: false, hellfire: false }
+    }
+  }
+
+  _savePortalUnlocks() {
+    try {
+      if (typeof window === 'undefined')
+        return
+      window.localStorage?.setItem?.('mmmc:portal_unlocks_v1', JSON.stringify(this._portalUnlocks || { mine: false, hellfire: false }))
+    }
+    catch {
     }
   }
 
@@ -1201,6 +1593,126 @@ export default class World {
     return true
   }
 
+  _equipMiningPickaxe() {
+    if (this._miningPickaxe || !this.player)
+      return
+    const gltf = this.resources?.items?.Pickaxe_Wood
+    const scene = gltf?.scene
+    if (!scene)
+      return
+
+    const tool = scene.clone(true)
+    tool.traverse((child) => {
+      if (!child?.isMesh)
+        return
+      child.castShadow = true
+      child.receiveShadow = true
+      child.frustumCulled = false
+      if (child.material) {
+        child.material.side = THREE.FrontSide
+        child.material.transparent = true
+      }
+    })
+
+    try {
+      const box = new THREE.Box3().setFromObject(tool)
+      const size = new THREE.Vector3()
+      const center = new THREE.Vector3()
+      box.getSize(size)
+      box.getCenter(center)
+      tool.position.sub(center)
+      const maxDim = Math.max(0.0001, size.x, size.y, size.z)
+      const scalar = THREE.MathUtils.clamp(0.55 / maxDim, 0.05, 3.5)
+      tool.scale.setScalar(scalar)
+    }
+    catch {
+      tool.scale.setScalar(0.8)
+    }
+
+    const hold = new THREE.Group()
+    hold.add(tool)
+
+    const hand = this.player?._findHandBone?.() || null
+    if (hand?.add) {
+      hold.position.set(0.05, 0.02, 0.0)
+      hold.rotation.set(Math.PI * 0.2, 0, Math.PI * 0.6)
+      hand.add(hold)
+    }
+    else {
+      hold.position.set(0.58, 1.0, 0.18)
+      hold.rotation.set(0, Math.PI * 0.5, Math.PI * 0.6)
+      this.player.movement?.group?.add?.(hold)
+    }
+
+    this._miningPickaxe = hold
+  }
+
+  _unequipMiningPickaxe() {
+    if (!this._miningPickaxe)
+      return
+    this._miningPickaxe.visible = false
+    this._miningPickaxe.removeFromParent?.()
+    this._miningPickaxe = null
+  }
+
+  _startMiningOre(ore) {
+    if (this.isPaused || this.currentWorld !== 'dungeon' || this._activeDungeonPortalId !== 'mine')
+      return false
+    if (!ore?.mesh || ore.mesh.visible === false)
+      return false
+    if (this._miningState)
+      return false
+    const items = this._getBagItems('backpack')
+    const hasPickaxe = Math.max(0, Math.floor(Number(items?.Pickaxe_Wood) || 0)) > 0
+    if (!hasPickaxe) {
+      emitter.emit('dungeon:toast', { text: '需要鹤嘴镐才能挖矿' })
+      return false
+    }
+    const now = this.experience?.time?.elapsed ?? 0
+    const durationMs = 5000
+    this._miningState = { ore, until: now + durationMs }
+    this.player?.setControlLocked?.(true)
+    this.player?.setSprintDisabled?.(true)
+    this.player?.animation?.playAction?.('Punch', 0.08)
+    this._equipMiningPickaxe()
+    emitter.emit('mining:begin', { startedAt: now, durationMs, label: '挖矿中' })
+    return true
+  }
+
+  _updateMining() {
+    if (!this._miningState)
+      return
+    const now = this.experience?.time?.elapsed ?? 0
+    const until = Number(this._miningState.until) || 0
+    if (now < until)
+      return
+    const ore = this._miningState.ore
+    this._miningState = null
+    this._unequipMiningPickaxe()
+    this.player?.setControlLocked?.(false)
+    this.player?.setSprintDisabled?.(false)
+    emitter.emit('mining:end')
+
+    if (ore?.mesh) {
+      ore.mesh.visible = false
+      ore.mesh.removeFromParent?.()
+    }
+    if (Array.isArray(this._mineOres)) {
+      const idx = this._mineOres.indexOf(ore)
+      if (idx >= 0)
+        this._mineOres.splice(idx, 1)
+    }
+    if (Array.isArray(this._mineOreInteractables)) {
+      for (const it of this._mineOreInteractables) {
+        if (it?.mineOre === ore)
+          it.range = 0
+      }
+    }
+
+    this._addInventoryItem('backpack', 'crystal_small', 1)
+    emitter.emit('dungeon:toast', { text: '挖矿完成：获得 crystal_small x1' })
+  }
+
   _fireMatterGun() {
     if (this.isPaused)
       return
@@ -1213,9 +1725,11 @@ export default class World {
     }
 
     if (this.currentWorld === 'dungeon') {
-      const ore = this._findFrontDungeonOre({ maxDist: 14, minDot: 0.72 })
-      if (ore)
-        this._suckDungeonOre(ore)
+      if (this._activeDungeonPortalId !== 'mine') {
+        const ore = this._findFrontDungeonOre({ maxDist: 14, minDot: 0.72 })
+        if (ore)
+          this._suckDungeonOre(ore)
+      }
     }
   }
 
@@ -1236,13 +1750,17 @@ export default class World {
     const count = this._inventory?.backpack?.items?.[id] || 0
     if (!id.startsWith('canister_') || count <= 0)
       return false
-    if (this._armedCanisterThrow?.itemId === id) {
+    const nextMetaIndex = Number.isFinite(Number(metaIndex)) ? Math.max(0, Math.floor(Number(metaIndex))) : null
+    const curMetaIndex = this._armedCanisterThrow?.metaIndex ?? null
+    if (this._armedCanisterThrow?.itemId === id && curMetaIndex === nextMetaIndex) {
       this._clearArmedCanisterThrow()
       return true
     }
-    this._armedCanisterThrow = { itemId: id, metaIndex: Number.isFinite(Number(metaIndex)) ? Math.max(0, Math.floor(Number(metaIndex))) : null }
+    this._armedCanisterThrow = { itemId: id, metaIndex: nextMetaIndex }
     this._ensureCanisterCarryVisual(id)
     this._ensureCanisterAimPreview()
+    emitter.emit('pet:throw_aim', { enabled: true })
+    this.player?.setCarryPoseEnabled?.(true)
     return true
   }
 
@@ -1252,6 +1770,8 @@ export default class World {
     this._canisterCarry = null
     this._canisterAimPreview?.removeFromParent?.()
     this._canisterAimPreview = null
+    emitter.emit('pet:throw_aim', { enabled: false })
+    this.player?.setCarryPoseEnabled?.(false)
   }
 
   _ensureCanisterCarryVisual(itemId) {
@@ -1287,13 +1807,25 @@ export default class World {
     const line = new THREE.Line(geom, mat)
     line.frustumCulled = false
     group.add(line)
+    const dots = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(0.07, 10, 10),
+      new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false }),
+      48,
+    )
+    dots.frustumCulled = false
+    dots.count = 0
+    dots.renderOrder = 9998
+    group.add(dots)
     const marker = new THREE.Mesh(
       new THREE.SphereGeometry(0.12, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0xFFD166, roughness: 0.8, metalness: 0.0 }),
+      new THREE.MeshBasicMaterial({ color: 0xFFD166, transparent: true, opacity: 0.95, depthTest: false, depthWrite: false }),
     )
     marker.frustumCulled = false
+    marker.renderOrder = 9999
     group.add(marker)
     group.userData._line = line
+    group.userData._dots = dots
+    group.userData._dotsTemp = new THREE.Object3D()
     group.userData._marker = marker
     this.scene.add(group)
     this._canisterAimPreview = group
@@ -1309,14 +1841,16 @@ export default class World {
       aim && (aim.visible = false)
       return
     }
-    const camPos = new THREE.Vector3()
     const camDir = new THREE.Vector3()
-    camera.getWorldPosition(camPos)
     camera.getWorldDirection(camDir)
     camDir.normalize()
 
-    const hold = camPos.clone().add(camDir.clone().multiplyScalar(2.0))
-    hold.y -= 0.85
+    const camRight = new THREE.Vector3().crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize()
+    const p = this.player?.getPosition?.() || this.player?.movement?.group?.position || new THREE.Vector3()
+    const hold = new THREE.Vector3(p.x, p.y, p.z)
+      .add(camRight.multiplyScalar(-0.85))
+      .add(new THREE.Vector3(0, 1.65, 0))
+      .add(new THREE.Vector3(camDir.x, 0, camDir.z).normalize().multiplyScalar(0.35))
     const groundY = this._getSurfaceY(hold.x, hold.z) + 0.2
     if (hold.y < groundY)
       hold.y = groundY
@@ -1331,6 +1865,8 @@ export default class World {
       return
     aim.visible = true
     const line = aim.userData?._line
+    const dots = aim.userData?._dots
+    const dotsTemp = aim.userData?._dotsTemp
     const marker = aim.userData?._marker
     if (!line?.geometry || !marker)
       return
@@ -1363,6 +1899,17 @@ export default class World {
     line.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     line.geometry.computeBoundingSphere()
     marker.position.copy(points[points.length - 1] || start)
+
+    if (dots && dotsTemp) {
+      const n = Math.min(points.length, dots.instanceMatrix.count)
+      dots.count = n
+      for (let i = 0; i < n; i++) {
+        dotsTemp.position.copy(points[i])
+        dotsTemp.updateMatrix()
+        dots.setMatrixAt(i, dotsTemp.matrix)
+      }
+      dots.instanceMatrix.needsUpdate = true
+    }
   }
 
   _applyStun(entity, untilMs) {
@@ -1567,6 +2114,7 @@ export default class World {
     ally._resourceKey = key
     ally._typeLabel = displayName || (this._getModelFilenameByResourceKey?.(key) || key)
     ally._isSummonedAlly = true
+    ally.setShowHpBarAlways?.(true)
     this._summonedSeq = (this._summonedSeq ?? 1)
     ally._summonedId = ally._summonedId || `ally_${this._summonedSeq++}`
     ally._summonedKind = capturedKind || null
@@ -1803,6 +2351,207 @@ export default class World {
     emitter.emit('dungeon:state', payload)
   }
 
+  _startDungeonRun() {
+    if (this.currentWorld !== 'dungeon' || !this._activeDungeonPortalId)
+      return
+    const now = this.experience.time?.elapsed ?? 0
+    const timeLimitMs = 180_000
+    const inv = this.inventorySystem?.inventory || null
+    const clone = (value) => {
+      if (!value || typeof value !== 'object')
+        return value
+      if (typeof structuredClone === 'function')
+        return structuredClone(value)
+      return JSON.parse(JSON.stringify(value))
+    }
+
+    const backpackItems = clone(inv?.backpack?.items || {}) || {}
+    const backpackLayout = clone(inv?.gridLayouts?.backpack || {}) || {}
+    const canisterMeta = clone(inv?.canisterMeta || {}) || {}
+    const bossTotal = Array.isArray(this._dungeonEnemies)
+      ? this._dungeonEnemies.filter(e => e?.isBoss).length
+      : 0
+
+    this._dungeonRun = {
+      portalId: String(this._activeDungeonPortalId),
+      startedAt: now,
+      timeLimitMs,
+      remainingMs: timeLimitMs,
+      kills: 0,
+      lootCount: 0,
+      lootByItemId: {},
+      bossTotal,
+      bossKills: 0,
+      bossKilledAt: null,
+      nextPursuerSpawnAt: null,
+      ended: false,
+      lastTimerEmitSec: null,
+      inventorySnapshot: { backpackItems, backpackLayout, canisterMeta },
+    }
+
+    emitter.emit('dungeon:timer', { remainingMs: timeLimitMs, limitMs: timeLimitMs, elapsedMs: 0 })
+  }
+
+  _updateDungeonRunTimer() {
+    if (this.currentWorld !== 'dungeon')
+      return
+    const run = this._dungeonRun
+    if (!run || run.ended)
+      return
+    const now = this.experience.time?.elapsed ?? 0
+    const elapsedMs = Math.max(0, now - (run.startedAt ?? 0))
+    const limitMs = Math.max(0, Number(run.timeLimitMs) || 0)
+    const remainingMs = Math.max(0, limitMs - elapsedMs)
+    run.remainingMs = remainingMs
+
+    const sec = Math.ceil(remainingMs / 1000)
+    if (sec !== run.lastTimerEmitSec) {
+      run.lastTimerEmitSec = sec
+      emitter.emit('dungeon:timer', { remainingMs, limitMs, elapsedMs })
+    }
+
+    if (remainingMs <= 0 && this.player && !this.player.isDead)
+      this.player.die({ reason: 'timeout' })
+  }
+
+  _buildDungeonRunSummary() {
+    const progress = this._dungeonProgress || null
+    const notesRemaining = progress ? Math.max(0, (progress.total ?? 0) - (progress.read ?? 0)) : 0
+    const bossAlive = Array.isArray(this._dungeonEnemies)
+      ? this._dungeonEnemies.filter(e => e?.isBoss && !e.isDead).length
+      : 0
+    const unpickedDrops = Array.isArray(this._dungeonInteractables)
+      ? this._dungeonInteractables.filter(i => i?.pickupItemId && !i.read).length
+      : 0
+    const run = this._dungeonRun || null
+    return {
+      kills: run?.kills ?? 0,
+      lootCount: run?.lootCount ?? 0,
+      notesRemaining,
+      bossAlive,
+      unpickedDrops,
+    }
+  }
+
+  _openDungeonExtraction() {
+    if (this.currentWorld !== 'dungeon' || !this._activeDungeonExit)
+      return
+    if (this.isPaused)
+      return
+    this.isPaused = true
+    this.experience.pointerLock?.exitLock?.()
+    this._emitDungeonState()
+    const summary = this._buildDungeonRunSummary()
+    emitter.emit('dungeon:extraction_open', {
+      dungeonName: this._dungeonName || '',
+      ...summary,
+    })
+  }
+
+  _restoreBackpackSnapshot(snapshot) {
+    const inv = this.inventorySystem?.inventory
+    if (!inv)
+      return false
+    if (!inv.backpack)
+      inv.backpack = { items: {} }
+    inv.backpack.items = snapshot?.backpackItems && typeof snapshot.backpackItems === 'object'
+      ? (typeof structuredClone === 'function' ? structuredClone(snapshot.backpackItems) : JSON.parse(JSON.stringify(snapshot.backpackItems)))
+      : {}
+    if (!inv.gridLayouts)
+      inv.gridLayouts = { backpack: {}, warehousePages: [] }
+    inv.gridLayouts.backpack = snapshot?.backpackLayout && typeof snapshot.backpackLayout === 'object'
+      ? (typeof structuredClone === 'function' ? structuredClone(snapshot.backpackLayout) : JSON.parse(JSON.stringify(snapshot.backpackLayout)))
+      : {}
+    inv.canisterMeta = snapshot?.canisterMeta && typeof snapshot.canisterMeta === 'object'
+      ? (typeof structuredClone === 'function' ? structuredClone(snapshot.canisterMeta) : JSON.parse(JSON.stringify(snapshot.canisterMeta)))
+      : {}
+    this._selectedCanisterItemId = null
+    this._selectedCanisterMetaIndex = null
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    this._applyBurdenEffects?.()
+    this._updateCanisterVisuals?.()
+    this._scheduleInventorySave()
+    return true
+  }
+
+  _wipeBackpackKeepTool() {
+    const inv = this.inventorySystem?.inventory
+    if (!inv)
+      return false
+    const keepId = 'material_gun'
+    const keepCount = Math.max(1, Math.floor(Number(inv?.backpack?.items?.[keepId] || 1)))
+    if (!inv.backpack)
+      inv.backpack = { items: {} }
+    inv.backpack.items = { [keepId]: keepCount }
+    if (!inv.gridLayouts)
+      inv.gridLayouts = { backpack: {}, warehousePages: [] }
+    inv.gridLayouts.backpack = {}
+    this._selectedCanisterItemId = null
+    this._selectedCanisterMetaIndex = null
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    this._applyBurdenEffects?.()
+    this._updateCanisterVisuals?.()
+    this._scheduleInventorySave()
+    return true
+  }
+
+  _hasReviveItem() {
+    const ids = ['magatama', 'linggouyu', 'spirit_magatama']
+    for (const id of ids) {
+      if ((this._inventory?.backpack?.items?.[id] || 0) > 0)
+        return id
+    }
+    return null
+  }
+
+  _consumeReviveItem() {
+    const id = this._hasReviveItem()
+    if (!id)
+      return false
+    return !!this._removeInventoryItem?.('backpack', id, 1)
+  }
+
+  _restartDungeonRun() {
+    if (this.currentWorld !== 'dungeon' || !this._activeDungeonPortal)
+      return false
+    const run = this._dungeonRun
+    if (!run || run.ended)
+      return false
+    this.isPaused = true
+    this.experience.pointerLock?.exitLock?.()
+    this._emitDungeonState()
+    this._restoreBackpackSnapshot(run.inventorySnapshot)
+    this._ignorePortalDungeonProgressOnce = true
+    emitter.emit('loading:show', { title: '正在重来：地牢重置中', kind: 'dungeon-restart' })
+    setTimeout(() => {
+      const portal = this._activeDungeonPortal
+      this.dungeonSystem?.enterDungeon?.(portal)
+      this.isPaused = false
+      this._emitDungeonState()
+      emitter.emit('loading:hide')
+      this.experience.pointerLock?.requestLock?.()
+    }, 450)
+    return true
+  }
+
+  _openDungeonDeathUi(reason = null) {
+    if (this.currentWorld !== 'dungeon')
+      return
+    this.isPaused = true
+    this.experience.pointerLock?.exitLock?.()
+    this._emitDungeonState()
+    const summary = this._buildDungeonRunSummary()
+    const reviveItemId = this._hasReviveItem()
+    emitter.emit('dungeon:death_open', {
+      dungeonName: this._dungeonName || '',
+      reason: reason || 'death',
+      reviveItemId,
+      ...summary,
+    })
+  }
+
   _initPortals() {
     const centerX = Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
     const centerZ = Math.floor((this.chunkManager.chunkWidth ?? 64) / 2)
@@ -1828,6 +2577,12 @@ export default class World {
         name: '沙漠',
         target: { x: hub.x - targetOffset, z: hub.z },
         color: 0xFF_D4_5D,
+      },
+      {
+        id: 'hellfire',
+        name: '地狱火',
+        target: { x: hub.x - targetOffset, z: hub.z + targetOffset },
+        color: 0xFF_5B_3D,
       },
       {
         id: 'snow',
@@ -1924,6 +2679,7 @@ export default class World {
       return
 
     this._mineOres = []
+    this._mineOreInteractables = []
 
     const group = new THREE.Group()
     this._dungeonGroup.add(group)
@@ -1978,6 +2734,16 @@ export default class World {
         itemId,
         count: 1,
         hitRadius: this._getHitRadiusFromObject(mesh, cfg.big ? 1.2 : 0.8),
+      })
+      this._mineOreInteractables.push({
+        id: `mine_ore:${this._mineOres.length - 1}`,
+        title: '矿石',
+        hint: '按 E 挖矿',
+        description: '需要鹤嘴镐。',
+        x,
+        z,
+        range: 2.6,
+        mineOre: this._mineOres[this._mineOres.length - 1],
       })
     }
   }
@@ -2340,8 +3106,8 @@ export default class World {
     return this.dungeonEnemySystem?.spawnDungeonCoinDrop?.(enemy)
   }
 
-  _spawnDungeonItemDrop({ itemId, amount = 1, x = null, z = null } = {}) {
-    return this.dropSystem?.spawnDungeonItemDrop?.({ itemId, amount, x, z })
+  _spawnDungeonItemDrop({ itemId, amount = 1, x = null, z = null, canisterMeta = null } = {}) {
+    return this.dropSystem?.spawnDungeonItemDrop?.({ itemId, amount, x, z, canisterMeta })
   }
 
   _updatePortals() {
@@ -2349,11 +3115,25 @@ export default class World {
   }
 
   update() {
-    if (this.isPaused)
-      return
-
     const dt = this.experience.time.delta * 0.001
     const t = (this.experience.time.elapsed ?? 0) * 0.001
+    this._updateDungeonRunTimer?.()
+    if (this.player) {
+      const now = this.experience.time.elapsed ?? 0
+      if (!Number.isFinite(Number(this._lastCoordsEmitAt)) || now - this._lastCoordsEmitAt > 120) {
+        this._lastCoordsEmitAt = now
+        const pos = this.player.getPosition()
+        emitter.emit('ui:coords', { x: pos.x, y: pos.y, z: pos.z })
+      }
+    }
+    if (this.isPaused) {
+      const now = this.experience.time.elapsed ?? 0
+      const until = this.player?._deathCinematicUntil
+      if (this.currentWorld === 'dungeon' && this.player?.isDead && typeof until === 'number' && Number.isFinite(until) && now < until) {
+        this.player?.animation?.updateMixerOnly?.(this.experience.time.delta)
+      }
+      return
+    }
     this._systemManager?.update?.(dt, t)
 
     // Step2：先做 chunk streaming，确保玩家碰撞查询能尽量命中已加载 chunk
@@ -2369,6 +3149,7 @@ export default class World {
 
     if (this.player)
       this.player.update()
+    this._updateMining?.()
     if (this.floor)
       this.floor.update()
     if (this.environment)
@@ -2405,10 +3186,12 @@ export default class World {
       }
 
       this._resolvePlayerHubCollisions()
+      this._resolveNonPlayerDynamicCollisions()
     }
     else if (this.currentWorld === 'dungeon') {
       this._resolvePlayerEnemyCollisions()
       this._resolvePlayerDungeonObjectCollisions()
+      this._resolveNonPlayerDynamicCollisions()
     }
     this._updateNameLabelVisibility()
   }
@@ -2523,6 +3306,14 @@ export default class World {
 
     const colliders = []
 
+    if (this._summonedAllies && this._summonedAllies.length) {
+      for (const ally of this._summonedAllies) {
+        if (!ally?.group || ally.isDead)
+          continue
+        colliders.push({ group: ally.group, hitRadius: ally.hitRadius ?? 0.9 })
+      }
+    }
+
     if (this.animals && this.animals.length) {
       for (const animal of this.animals) {
         if (!animal?.group)
@@ -2576,20 +3367,35 @@ export default class World {
     if (this.currentWorld !== 'dungeon')
       return
     const movement = this.player?.movement
-    if (!movement || !this._dungeonEnemies || this._dungeonEnemies.length === 0)
+    if (!movement)
       return
 
     const base = movement.position
     const pr = movement.capsule?.radius ?? 0.3
     const v = movement.worldVelocity
-    for (const enemy of this._dungeonEnemies) {
-      if (!enemy?.group || enemy.isDead)
-        continue
-      const er = enemy.hitRadius ?? 0.9
-      const r = pr + er
+    const colliders = []
+    if (this._dungeonEnemies && this._dungeonEnemies.length) {
+      for (const enemy of this._dungeonEnemies) {
+        if (!enemy?.group || enemy.isDead)
+          continue
+        colliders.push(enemy)
+      }
+    }
+    if (this._summonedAllies && this._summonedAllies.length) {
+      for (const ally of this._summonedAllies) {
+        if (!ally?.group || ally.isDead)
+          continue
+        colliders.push(ally)
+      }
+    }
+    if (colliders.length === 0)
+      return
 
-      const dx = base.x - enemy.group.position.x
-      const dz = base.z - enemy.group.position.z
+    for (const e of colliders) {
+      const er = e.hitRadius ?? 0.9
+      const r = pr + er
+      const dx = base.x - e.group.position.x
+      const dz = base.z - e.group.position.z
       const d2 = dx * dx + dz * dz
       if (d2 <= 0.000001 || d2 >= r * r)
         continue
@@ -2609,6 +3415,84 @@ export default class World {
           v.x -= vn * nx
           v.z -= vn * nz
         }
+      }
+    }
+  }
+
+  _resolveNonPlayerDynamicCollisions() {
+    if (this.currentWorld === 'hub') {
+      const list = []
+      if (this.animals && this.animals.length) {
+        for (const a of this.animals) {
+          if (!a?.group || a.isDead || a === this._carriedAnimal)
+            continue
+          list.push(a)
+        }
+      }
+      if (this._summonedAllies && this._summonedAllies.length) {
+        for (const a of this._summonedAllies) {
+          if (!a?.group || a.isDead)
+            continue
+          list.push(a)
+        }
+      }
+      this._resolveMutualCircleCollisions(list)
+      return
+    }
+
+    if (this.currentWorld === 'dungeon') {
+      const list = []
+      if (this._dungeonEnemies && this._dungeonEnemies.length) {
+        for (const e of this._dungeonEnemies) {
+          if (!e?.group || e.isDead)
+            continue
+          list.push(e)
+        }
+      }
+      if (this._summonedAllies && this._summonedAllies.length) {
+        for (const a of this._summonedAllies) {
+          if (!a?.group || a.isDead)
+            continue
+          list.push(a)
+        }
+      }
+      this._resolveMutualCircleCollisions(list)
+    }
+  }
+
+  _resolveMutualCircleCollisions(list) {
+    if (!Array.isArray(list) || list.length < 2)
+      return
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i]
+      const ag = a?.group
+      if (!ag)
+        continue
+      const ar = Math.min(0.9, Math.max(0.25, (Number(a.hitRadius) || 0.9) * 0.55))
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j]
+        const bg = b?.group
+        if (!bg)
+          continue
+        if (a?.behavior?.state === 'attack' || b?.behavior?.state === 'attack')
+          continue
+        const br = Math.min(0.9, Math.max(0.25, (Number(b.hitRadius) || 0.9) * 0.55))
+        const r = ar + br
+        const dx = ag.position.x - bg.position.x
+        const dz = ag.position.z - bg.position.z
+        const d2 = dx * dx + dz * dz
+        if (d2 <= 0.000001 || d2 >= r * r)
+          continue
+        const d = Math.sqrt(d2)
+        const nx = dx / d
+        const nz = dz / d
+        const overlap = (r - d) * 0.5
+        if (overlap <= 0.02)
+          continue
+        ag.position.x += nx * overlap
+        ag.position.z += nz * overlap
+        bg.position.x -= nx * overlap
+        bg.position.z -= nz * overlap
       }
     }
   }
@@ -2660,14 +3544,24 @@ export default class World {
       emitter.off('inventory:equip', this._onInventoryEquip)
     if (this._onInventoryGridPlace)
       emitter.off('inventory:grid_place', this._onInventoryGridPlace)
+    if (this._onWarehouseGridPlace)
+      emitter.off('inventory:warehouse_grid_place', this._onWarehouseGridPlace)
     if (this._onInventorySelect)
       emitter.off('inventory:select', this._onInventorySelect)
+    if (this._onBuildExit)
+      emitter.off('build:exit', this._onBuildExit)
+    if (this._onShopSell)
+      emitter.off('shop:sell', this._onShopSell)
     if (this._onWarehousePage)
       emitter.off('inventory:warehouse_page', this._onWarehousePage)
     if (this._onInventoryDrop)
       emitter.off('inventory:drop', this._onInventoryDrop)
     if (this._onPetRecharge)
       emitter.off('pet:recharge', this._onPetRecharge)
+    if (this._onDungeonExtractionAction)
+      emitter.off('dungeon:extraction_action', this._onDungeonExtractionAction)
+    if (this._onDungeonDeathAction)
+      emitter.off('dungeon:death_action', this._onDungeonDeathAction)
     if (this._onGrabPet)
       emitter.off('input:grab_pet', this._onGrabPet)
     if (this._onToggleBlockEditMode)

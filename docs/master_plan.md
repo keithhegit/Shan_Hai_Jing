@@ -1,6 +1,6 @@
 # 3rd_MC — Master Plan（GDD / PRD / 技术方案 / 迭代计划汇总）
 
-更新时间：2026-01-18  
+更新时间：2026-01-25  
 基线版本：`main@6759649`（已合并并推送 main）  
 迭代分支：`new_battle`（战斗迭代分支；已合并过一次，后续可继续复用或按需新开）
 
@@ -85,7 +85,7 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 
 ### 1.2 核心体验流程
 
-加载页 → Hub（超平坦世界） → 传送门选择 → 加载过渡 → Dungeon（探索/互动/战斗） → 通关 CTA → 返回 Hub
+加载页 → Camazots（Hub） → 传送门选择 → 加载过渡 → Dungeon（探索/互动/战斗/倒计时） → 撤离结算（撤离/重来） → 返回 Camazots
 
 ### 1.3 目标平台与最低验收环境
 
@@ -112,27 +112,32 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - 敌人/动物模型渲染：支持同一 GLTF 多实例创建（修复“创建了但不可见”的常见骨骼克隆问题）
 - 地牢敌人动画：进入地牢后默认播放走动类动画（Walk/Run/Move 兜底）
 
-### 2.1.1 近期新增（相对 2026-01-14 文档版本）
+### 2.1.1 近期新增（相对 2026-01-18 文档版本）
 
-- 修复：SkinnedMesh/骨骼模型多实例克隆（敌人/动物）导致不可见
-- 增强：Playwright smoke 额外校验 Hub 动物与地牢敌人存在
-- 降噪：Vite SCSS 配置切到 modern API，避免 Sass legacy-js-api 警告刷屏
-- 文档：新增 `src/js/world/model_list.md`，汇总 World 资源加载 key 与使用点
-- Hub：精简交互点（仅保留仓库交互；移除纸条/水晶两处任务提示交互物）
-- Hub：传送门改为单入口 + 菜单选择目的地
-- 地牢：奖励宝箱迁移进各地牢，上锁宝箱解锁后支持战利品弹出与场景拾取
-- 地牢：任务提示交互物外观从宝箱切换为 `star.glb`（宝箱外观保留给地牢宝箱与仓库）
-- UI：左下角新增日志 HUD（默认高透明；悬停才清晰），背包支持“拖出网格→确认丢弃→掉落可再拾取”
+- 世界景观：Camazots 远景按分区生成雪山/矿山/草山/死亡之山，并使用 cube/Environment 模型池混入地物
+- 新增地牢：Hellfire（火山风格），Boss 使用 demon，小怪使用 zombie
+- 敌人生成：进入地牢时对出生点做占用校验与环形搜索，减少敌人卡在方块内不可见
+- 战斗武器：灵兽石（itemId 仍为 `material_gun`）增加射程限制，超出射程 HUD 提示“射程不足”
+- 生态规则：陆生动物不下水；鱼类 NPC 已移除（避免“只有名字可见”的不稳定表现）
+- 基地模块：牧场终端 + 玩家建造围栏（方块）+ 投放收容罐圈养（以当前实现为准）
+- 搜打撤闭环：3 分钟倒计时；出口按 E 弹出撤离结算（撤离/重来）；死亡后“你死了”结算；Boss 击杀后每 10 秒刷追兵追击
 
 ### 2.1.2 待修复与行动计划（来自 2026-01-18 反馈）
 
 - 主控模型：恢复 `public/models/character/Character_Male_1.gltf` 为 `playerModel`（入口：`src/js/sources.js`、`src/js/world/player/player.js`）
-- 物质枪外观：将装备模型替换为 `public/models/Environment/crystal2.glb`（复用 `material_gun` 资源 key）
-- 物质枪挂点：装备后将心形渲染在主控左上举高位置，并将射线起点改为该位置（入口：`src/js/world/player/player.js`、`src/js/world/world.js`）
-- 物质枪射线：将当前线段渲染升级为“可见直径”的光束（入口：`src/js/world/world.js`）
+- 灵兽石外观：将装备模型替换为 `public/models/Environment/crystal2.glb`（复用 `material_gun` 资源 key）
+- 灵兽石挂点：装备后将心形渲染在主控左上举高位置，并将射线起点改为该位置（入口：`src/js/world/player/player.js`、`src/js/world/world.js`）
+- 灵兽石射线：将当前线段渲染升级为“可见直径”的光束（入口：`src/js/world/world.js`）
 - 宝箱位置：森林/平原/雪原/沙漠宝箱仅在对应地牢出现，不在 Hub 出现（入口：`src/js/world/world.js`）
 - 宝箱交互：钥匙激活成功后“随机道具弹出”，随后该宝箱消失（入口：`src/js/world/world.js`）
 - 地牢入口：Hub 仅保留一个入口交互点，并通过 Modal 菜单提供 5 个目的地（森林/平原/雪原/沙漠/矿山）（入口：`src/App.vue`、`src/js/world/world.js`、`src/components/StoryModal.vue` 或同类 Modal 组件）
+
+### 2.1.3 本轮修复与回滚（2026-01-26）
+
+- 天空“灰幕/盒子”问题：回滚 `backgroundTexture` 映射为普通 UV（不使用 equirect）；相机 `far` 提升到 2000，避免远景硬裁切
+- 鱼系统：移除 FishNpcSystem 与相关资源/注册，避免“只有名字可见”的不稳定表现
+- 旅行商人：缩放为原来的一半并贴地，加入玩家软碰撞推开；商店新增“卖出”流程
+- 牧场建造：Fence 由 GLTF 围栏改为实心方块写入（具备碰撞）；`Fence_Center ≤ 16`，`Fence_Corner ≤ 4`
 
 补充：灵宠/收容罐迭代（背包交互 + 战斗表现 + 经济闭环）
 
@@ -148,9 +153,12 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - 方块模型：Terrain 方块渲染从默认 BoxGeometry/材质替换为 `public/models/cube/*.gltf`（入口：`src/js/world/terrain/blocks-config.js`、`src/js/world/terrain/terrain-renderer.js`、`src/js/sources.js`）
 - 方块模型策略：优先走 `blocks-config.modelKey` 对应的 gltf；缺失 modelKey/资源时回退到原贴图材质（避免一次性补齐全部模型资源）
 - 方块选型：按 Hub 与各地牢（平原/雪原/沙漠/森林/矿山）配置不同的块外观/颜色（可用“同模型不同 tint”的方式做差异）
-- 树模型：Hub 超平坦世界的树从体素树替换为 `public/models/Environment/Tree_1/2/3.gltf` 随机混用（入口：`src/js/world/terrain/terrain-generator.js`、`src/js/world/terrain/biome-config.js`、`src/js/sources.js`）
-- 树渲染策略：生成阶段产出 `treeModelData`（不再写 trunk/leaves 方块），渲染阶段按 chunk 用 InstancedMesh 批量渲染；生成地牢时会清理地牢包围盒内的树实例避免穿模
-- 性能约束：方块仍保持 InstancedMesh 批量渲染；树按“稀疏实例”生成并做 chunk 级别的创建/清理
+- Camazots 植被（草/花）：从贴图交叉草切换为 GLTF 实例渲染（入口：`src/js/world/terrain/plant-model-renderer.js`、`src/js/world/terrain/terrain-chunk.js`、`src/js/world/world.js`）
+  - 无碰撞：`Environment/*.gltf`（Grass/Flowers/Plant 等）+ `Environment/no_entity` 草库
+  - 贴地口径：使用 `plantData.y - 1` 作为地表高度，避免“漂浮在空中”
+- 树/地物模型（有碰撞）：Camazots（Hub）的树与地表实体（Environment Tree_1-4/Tree_Fruit/Bamboo + with_entity Bush/Rock）使用“模型池 + 权重”随机混入（入口：`src/js/world/terrain/terrain-generator.js`、`src/js/world/world.js`）
+- 碰撞策略：渲染使用 InstancedMesh，碰撞使用“不可见体素块”写入（不渲染 trunk/leaves 方块网格，但仍作为阻挡存在）
+- 性能约束：方块仍保持 InstancedMesh 批量渲染；植被/树/地物按 chunk 分批实例化，并做生成密度抽样与区域清理（仓库/地牢包围盒）
 
 验收口径（最小）：
 
@@ -158,7 +166,7 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - 投掷命中后双方 3 秒眩晕（禁移动/禁攻击 + 头顶提示可见）
 - 跟随灵宠可 **E → 收容** 回背包；战败回罐需要 coin 充能才能再次投掷
 - 传送后灵宠仍跟随在主控附近，不留在旧世界
-- Hub 的树替换为 Tree_1/2/3 的随机混用，且不会生成体素树残留
+- Hub 的树/灌木/岩石会按模型池随机混用，且碰撞阻挡与清理规则一致
 - Hub 与地牢的地面/墙体方块可见并有明显风格区分（不要求最终美术，但要稳定可读）
 
 ### 2.1.3 已确认口径（来自 2026-01-21 评审结论）
@@ -175,11 +183,11 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - 触发条件（当前实现）：Hub 与 Dungeon 都可捕捉；必须先锁定目标；目标 HP 低于等于阈值（约为 maxHp 的 15%，按整数阈值计算）并处于“硬直”
 - “硬直”定义（当前实现）：敌人被打到残血阈值后，进入短暂 stunned 状态（`enemy.isStunned()` 返回 true）
 
-3. Beam 语义（捕捉 Beam vs 物质枪 Beam）
+3. Beam 语义（捕捉 Beam vs 灵兽石 Beam）
 
 - 当前实现：两条束各自维护一个 Mesh（互不复用）
 - 建议方向：后续可抽一个通用 Beam 工具（同材质/同更新逻辑），但保持“两个实例”更简单，避免状态互相影响
-- 视觉约定（已确认）：捕捉束使用 `heart.glb`（资源 key：`heart_ui`）；物质枪束使用 `crystal2.glb`（资源 key：`crystal2`）
+- 视觉约定（已确认）：捕捉束使用 `heart.glb`（资源 key：`heart_ui`）；灵兽石束使用 `crystal2.glb`（资源 key：`crystal2`）
 
 4. 灵兽罐（Canister）资产与尺寸
 
@@ -222,7 +230,7 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 
 ### 3.1 世界与场景
 
-- Hub（超平坦世界）
+- Camazots（Hub）
   - 玩家自由移动
   - 传送门集群：选择目标地牢
   - 边界约束：防止玩家离开核心区域太远
@@ -304,7 +312,7 @@ Web 端 Three.js + Vue 3 的可交互体验站：MC 风格的多世界传送门�
 - PortalSystem：Hub 入口提示与选择 UI（只负责入口，不把地牢逻辑塞进来）
 - InteractableSystem：交互物筛选、提示、描边、调用具体 action（把 `_onInteract` 的多分支收敛掉）
 - LockedChestSystem：钥匙校验、宝箱状态与战利品视觉、持久化
-- CombatSystem：锁定、近战、物质枪束、捕捉（可拆 Targeting/Melee/MatterGun/Capture）
+- CombatSystem：锁定、近战、灵兽石束、捕捉（可拆 Targeting/Melee/MatterGun/Capture）
 - NpcSystem：Hub 动物 + Dungeon 敌人（可拆两套更新逻辑，但共享统一接口）
 - HudAndLabels：心形 HUD、CSS2D 名字标签、提示气泡/小特效
 

@@ -34,7 +34,7 @@ export default class InventorySystem {
         Axe_Stone: { w: 2, h: 4 },
         Axe_Gold: { w: 2, h: 4 },
         Axe_Diamond: { w: 2, h: 4 },
-        Pickaxe_Wood: { w: 2, h: 4 },
+        Pickaxe_Wood: { w: 1, h: 2 },
         Pickaxe_Stone: { w: 2, h: 4 },
         Pickaxe_Gold: { w: 2, h: 4 },
         Pickaxe_Diamond: { w: 2, h: 4 },
@@ -46,6 +46,9 @@ export default class InventorySystem {
         Sword_Stone: { w: 2, h: 4 },
         Sword_Gold: { w: 2, h: 4 },
         Sword_Diamond: { w: 2, h: 4 },
+        pet_potion: { w: 1, h: 1 },
+        Fence_Center: { w: 1, h: 1 },
+        Fence_Corner: { w: 1, h: 1 },
       },
       itemWeights: {
         stone: 1,
@@ -53,6 +56,9 @@ export default class InventorySystem {
         coin: 0,
         crystal_big: 6,
         crystal_small: 3,
+        pet_potion: 1,
+        Fence_Center: 2,
+        Fence_Corner: 2,
         canister_small: 4,
         canister_medium: 8,
         canister_large: 16,
@@ -337,6 +343,32 @@ export default class InventorySystem {
     if (!this.inventory.gridLayouts)
       this.inventory.gridLayouts = { backpack: {} }
     this.inventory.gridLayouts.backpack = next
+    this.emitInventoryState()
+    this._scheduleSave()
+  }
+
+  placeWarehouseGridItem(payload) {
+    const uid = payload?.uid
+    const x = Math.floor(Number(payload?.x))
+    const y = Math.floor(Number(payload?.y))
+    const rotated = !!payload?.rotated
+    const page = Number.isFinite(Number(payload?.page)) ? Math.max(1, Math.floor(Number(payload.page))) : this._warehousePage
+    if (!uid || !Number.isFinite(x) || !Number.isFinite(y))
+      return
+
+    const items = this._getWarehousePageItems(page)
+    const base = this._getWarehousePageLayout(page)
+    const next = { ...base, [uid]: { x, y, rotated } }
+    const snapshot = this._buildBackpackGridSnapshot(items, next)
+    const placed = (snapshot?.items || []).find(i => i.uid === uid) || null
+    if (!placed || placed.x !== x || placed.y !== y || !!placed.rotated !== rotated) {
+      emitter.emit('dungeon:toast', { text: '无法放置到该位置' })
+      return
+    }
+
+    this._ensureWarehousePages()
+    const idx = Math.max(0, Math.min(this.inventory.gridLayouts.warehousePages.length - 1, Math.floor(Number(page) || 1) - 1))
+    this.inventory.gridLayouts.warehousePages[idx] = next
     this.emitInventoryState()
     this._scheduleSave()
   }
@@ -736,10 +768,10 @@ export default class InventorySystem {
     for (const item of preferred) {
       if (Number.isFinite(item.x) && Number.isFinite(item.y) && canFitAt(item.uid, item.x, item.y, item.w, item.h)) {
         fill(item.uid, item.x, item.y, item.w, item.h, item.uid)
-        placed.push({ uid: item.uid, itemId: item.itemId, w: item.w, h: item.h, x: item.x, y: item.y, rotated: item.rotated, count: item.count })
+        placed.push({ uid: item.uid, itemId: item.itemId, w: item.w, h: item.h, x: item.x, y: item.y, rotated: item.rotated, count: item.count, metaIndex: item.metaIndex ?? null })
       }
       else {
-        remaining.push({ uid: item.uid, itemId: item.itemId, w: item.rotated ? item.h : item.w, h: item.rotated ? item.w : item.h, count: item.count })
+        remaining.push({ uid: item.uid, itemId: item.itemId, w: item.rotated ? item.h : item.w, h: item.rotated ? item.w : item.h, count: item.count, metaIndex: item.metaIndex ?? null })
       }
     }
 

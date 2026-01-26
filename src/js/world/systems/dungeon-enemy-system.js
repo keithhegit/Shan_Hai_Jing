@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import HumanoidEnemy from '../enemies/humanoid-enemy.js'
 import { blocks } from '../terrain/blocks-config.js'
 
 export default class DungeonEnemySystem {
@@ -43,9 +44,77 @@ export default class DungeonEnemySystem {
     const playerPos = world.player?.getPosition?.()
     const playerDead = !!world.player?.isDead
     const allies = Array.isArray(world._summonedAllies) ? world._summonedAllies : []
+    const run = world._dungeonRun
+
+    if (run && !run.ended && run.bossKilledAt && !playerDead && playerPos) {
+      const remainingMs = Number.isFinite(Number(run.remainingMs)) ? Number(run.remainingMs) : null
+      if (remainingMs === null || remainingMs > 0) {
+        const hasNext = typeof run.nextPursuerSpawnAt === 'number' && Number.isFinite(run.nextPursuerSpawnAt)
+        if (!hasNext)
+          run.nextPursuerSpawnAt = Number(run.bossKilledAt) + 10_000
+        const spawnAnchor = world._dungeonSpawn || null
+        const centerX = Number.isFinite(Number(spawnAnchor?.x)) ? Number(spawnAnchor.x) : playerPos.x
+        const centerZ = Number.isFinite(Number(spawnAnchor?.z)) ? Number(spawnAnchor.z) : playerPos.z
+        const y = Number.isFinite(Number(world._dungeonSurfaceY)) ? Number(world._dungeonSurfaceY) : (spawnAnchor?.y ?? playerPos.y)
+        const maxPursuers = 8
+        let alivePursuers = 0
+        for (const e of world._dungeonEnemies) {
+          if (e && !e.isDead && e._isPursuer)
+            alivePursuers++
+        }
+        let spawnedThisFrame = 0
+        while (now >= run.nextPursuerSpawnAt && alivePursuers < maxPursuers && spawnedThisFrame < 2) {
+          const enemyType = Math.random() < 0.5 ? 'skeleton' : 'zombie'
+          const enemy = new HumanoidEnemy({
+            position: new THREE.Vector3(centerX, y + 0.1, centerZ),
+            rotationY: Math.random() * Math.PI * 2,
+            scale: 0.5,
+            type: enemyType,
+            hp: 4,
+          })
+          enemy._isPursuer = true
+          const base = Math.max(0.6, Number(enemy.hitRadius) || 0.9)
+          const jitterX = centerX + (Math.random() - 0.5) * 1.8
+          const jitterZ = centerZ + (Math.random() - 0.5) * 1.8
+          const safeX = Math.floor(jitterX) + 0.5
+          const safeZ = Math.floor(jitterZ) + 0.5
+          world.chunkManager?.forceSyncGenerateArea?.(safeX, safeZ, 1)
+          enemy.group.position.set(safeX, y + 0.1, safeZ)
+          if (!this.canOccupyAt(safeX, safeZ, y, base))
+            this.resolveIfInsideSolid(enemy)
+          enemy.behavior = {
+            state: 'chase',
+            timer: 2,
+            home: { x: centerX, z: centerZ },
+            radius: 6,
+            targetDir: enemy.group.rotation.y,
+            forceAggroUntil: now + 999_999,
+          }
+          enemy.playWalk?.()
+          enemy.addTo(world._dungeonEnemiesGroup)
+          world._dungeonEnemies.push(enemy)
+          run.nextPursuerSpawnAt += 10_000
+          alivePursuers++
+          spawnedThisFrame++
+        }
+        if (alivePursuers >= maxPursuers && now >= run.nextPursuerSpawnAt) {
+          run.nextPursuerSpawnAt = now + 10_000
+        }
+      }
+    }
 
     for (const enemy of world._dungeonEnemies) {
       enemy?.update?.()
+
+      if (run && !run.ended && enemy?.isDead && !enemy._countedKill) {
+        enemy._countedKill = true
+        run.kills = (run.kills || 0) + 1
+        if (enemy.isBoss) {
+          if (!run.bossKilledAt)
+            run.bossKilledAt = now
+          run.bossKills = (run.bossKills || 0) + 1
+        }
+      }
 
       if (enemy?.isBoss && enemy?.isDead) {
         if (!world._dungeonRewardSpawned)
@@ -376,7 +445,10 @@ export default class DungeonEnemySystem {
       return
 
     const pos = entity.group.position
-    const r = Math.min(0.9, Math.max(0.35, (Number(entity.hitRadius) || 0.9) * 0.55))
+    const base = Number(entity.hitRadius) || 0.9
+    const state = String(entity?.behavior?.state || '')
+    const stateScale = (state === 'chase' || state === 'attack') ? 0.4 : 0.55
+    const r = Math.min(0.9, Math.max(0.22, base * stateScale))
     const nextX = pos.x + dx
     const nextZ = pos.z + dz
     if (this.canOccupyAt(nextX, nextZ, pos.y, r)) {
@@ -434,7 +506,10 @@ export default class DungeonEnemySystem {
     if (!cm?.getBlockWorld || !entity?.group)
       return
     const pos = entity.group.position
-    const hitRadius = Math.min(0.9, Math.max(0.35, (Number(entity.hitRadius) || 0.9) * 0.55))
+    const base = Number(entity.hitRadius) || 0.9
+    const state = String(entity?.behavior?.state || '')
+    const stateScale = (state === 'chase' || state === 'attack') ? 0.4 : 0.55
+    const hitRadius = Math.min(0.9, Math.max(0.22, base * stateScale))
     if (this.canOccupyAt(pos.x, pos.z, pos.y, hitRadius))
       return
 

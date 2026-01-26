@@ -78,6 +78,7 @@ export default class TerrainGenerator {
         // 水面层数（水平面高度 = waterOffset * heightScale）
         waterOffset: options.water?.waterOffset ?? 8,
       },
+      scenery: options.sharedSceneryParams || options.scenery || null,
     }
 
     // 内部状态
@@ -180,6 +181,8 @@ export default class TerrainGenerator {
       const biomeRow = []
       const biomeDataRow = []
       for (let x = 0; x < width; x++) {
+        const wx = this.origin.x + x
+        const wz = this.origin.z + z
         // 获取当前位置的群系数据
         let biomeId
         let biomeData = null
@@ -193,6 +196,12 @@ export default class TerrainGenerator {
           // 回退到手动模式
           biomeId = this._getBiomeAt(x, z)
           biomeData = { biome: biomeId, temp: 0.5, humidity: 0.5, weights: null }
+        }
+
+        const overrideBiomeId = this._getBiomeOverrideAtWorld(wx, wz)
+        if (overrideBiomeId && overrideBiomeId !== biomeId) {
+          biomeId = overrideBiomeId
+          biomeData = { ...biomeData, biome: overrideBiomeId, weights: null }
         }
 
         biomeRow.push(biomeId)
@@ -222,8 +231,6 @@ export default class TerrainGenerator {
 
         // fBm 噪声 [-1,1]
         // 使用世界坐标采样，确保相邻 chunk 边界连贯
-        const wx = this.origin.x + x
-        const wz = this.origin.z + z
         const n = fbm2D(simplex, wx, wz, {
           octaves: this.params.terrain.fbm.octaves,
           gain: this.params.terrain.fbm.gain,
@@ -234,7 +241,8 @@ export default class TerrainGenerator {
         // 这样更直观：offset=16 表示地形基准在第 16 层附近
         const scaled = (offset / height) + normalizedMagnitude * n
         let columnHeight = Math.floor(height * scaled)
-        columnHeight = Math.max(0, Math.min(columnHeight, height - 1))
+        const ceilingPadding = 6
+        columnHeight = Math.max(0, Math.min(columnHeight, Math.max(0, height - 1 - ceilingPadding)))
 
         heightRow.push(columnHeight)
       }
@@ -249,7 +257,118 @@ export default class TerrainGenerator {
         const columnHeight = this.heightMap[z][x]
         const biomeData = this.biomeDataMap[z][x]
         this._fillColumnLayers(x, z, columnHeight, biomeData)
+        this._applySurfaceDecorations(x, z, columnHeight, biomeData)
       }
+    }
+  }
+
+  _getBiomeOverrideAtWorld(wx, wz) {
+    const scenery = this.params?.scenery
+    if (!scenery)
+      return null
+
+    const zones = Array.isArray(scenery.zones) ? scenery.zones : []
+    for (const z of zones) {
+      if (!z)
+        continue
+      const cx = Number(z.x)
+      const cz = Number(z.z)
+      const r = Math.max(0, Number(z.radius) || 0)
+      if (!Number.isFinite(cx) || !Number.isFinite(cz) || !(r > 0))
+        continue
+      const dx = wx - cx
+      const dz = wz - cz
+      if (dx * dx + dz * dz <= r * r)
+        return String(z.biomeId || '') || null
+    }
+
+    const hub = scenery.hubCenter
+    const coreRadius = Math.max(0, Number(scenery.coreRadius) || 0)
+    if (!hub || !(coreRadius > 0))
+      return null
+    const hx = Number(hub.x)
+    const hz = Number(hub.z)
+    if (!Number.isFinite(hx) || !Number.isFinite(hz))
+      return null
+    const dx = wx - hx
+    const dz = wz - hz
+    const r2 = dx * dx + dz * dz
+    if (r2 < coreRadius * coreRadius)
+      return null
+
+    const sectors = Array.isArray(scenery.sectors) ? scenery.sectors : []
+    if (sectors.length === 0)
+      return null
+
+    const a = Math.atan2(dz, dx)
+    const ang = a < 0 ? a + Math.PI * 2 : a
+    for (const s of sectors) {
+      if (!s)
+        continue
+      const minR = Math.max(0, Number(s.minR) || coreRadius)
+      const maxR = Number.isFinite(Number(s.maxR)) ? Math.max(minR, Number(s.maxR)) : Infinity
+      if (r2 < minR * minR || r2 > maxR * maxR)
+        continue
+      const amin = Number(s.angleMin)
+      const amax = Number(s.angleMax)
+      if (!Number.isFinite(amin) || !Number.isFinite(amax))
+        continue
+      const minA = amin < 0 ? amin + Math.PI * 2 : amin
+      const maxA = amax < 0 ? amax + Math.PI * 2 : amax
+      const inside = minA <= maxA
+        ? (ang >= minA && ang < maxA)
+        : (ang >= minA || ang < maxA)
+      if (inside)
+        return String(s.biomeId || '') || null
+    }
+
+    return null
+  }
+
+  _hash01(wx, wz, salt = 0) {
+    const x = Math.floor(Number(wx) || 0)
+    const z = Math.floor(Number(wz) || 0)
+    const s = Math.floor(Number(this.params?.seed) || 0) ^ Math.floor(Number(salt) || 0)
+    let h = (x * 374761393) ^ (z * 668265263) ^ (s * 1442695041)
+    h = (h ^ (h >>> 13)) * 1274126177
+    h ^= (h >>> 16)
+    return (h >>> 0) / 4294967295
+  }
+
+  _applySurfaceDecorations(x, z, surfaceHeight, biomeData = null) {
+    const biomeId = biomeData?.biome || this.biomeMap[z]?.[x]
+    if (!biomeId)
+      return
+    const waterOffset = this.params.water?.waterOffset ?? 8
+    if (surfaceHeight <= waterOffset + 1)
+      return
+    const wx = this.origin.x + x
+    const wz = this.origin.z + z
+
+    if (biomeId === 'mine') {
+      const r = this._hash01(wx, wz, 911)
+      if (r > 0.965) {
+        this.container.setBlockId(x, surfaceHeight, z, blocks.bricksDark.id)
+        if (this._hash01(wx, wz, 912) > 0.7)
+          this.container.setBlockId(x, surfaceHeight + 1, z, blocks.coalOre.id)
+      }
+      else if (r > 0.94) {
+        this.container.setBlockId(x, surfaceHeight, z, blocks.coalOre.id)
+      }
+      else if (r > 0.925) {
+        this.container.setBlockId(x, surfaceHeight, z, blocks.diamondOre.id)
+      }
+    }
+
+    if (biomeId === 'deadlands') {
+      const r = this._hash01(wx, wz, 133)
+      if (r > 0.965)
+        this.container.setBlockId(x, surfaceHeight, z, blocks.coalOre.id)
+      const m = this._hash01(wx, wz, 134)
+      if (m > 0.997)
+        this.container.setBlockId(x, surfaceHeight + 1, z, blocks.markExclamation.id)
+      else if (m > 0.994)
+        this.container.setBlockId(x, surfaceHeight + 1, z, blocks.markQuestion.id)
     }
   }
 
@@ -649,14 +768,58 @@ export default class TerrainGenerator {
         const vegType = String(vegetationType.type || '').toLowerCase()
 
         if (useModels && vegType && vegType !== 'cactus') {
-          const modelKey = this._pickTreeModelKey(vegType, biomeId, rng)
+          const worldX = (Number.isFinite(Number(this.originX)) ? Number(this.originX) : 0) + baseX
+          const worldZ = (Number.isFinite(Number(this.originZ)) ? Number(this.originZ) : 0) + baseZ
+          const zones = Array.isArray(this.params.trees?.exclusionZones) ? this.params.trees.exclusionZones : []
+          let blocked = false
+          for (const zone of zones) {
+            const zx = Number(zone?.x)
+            const zz = Number(zone?.z)
+            const r = Number(zone?.radius)
+            if (!Number.isFinite(zx) || !Number.isFinite(zz) || !Number.isFinite(r) || r <= 0)
+              continue
+            const dx = worldX - zx
+            const dz = worldZ - zz
+            if (dx * dx + dz * dz <= r * r) {
+              blocked = true
+              break
+            }
+          }
+          if (blocked)
+            continue
+
+          const modelPick = this._pickTreeModelKey(vegType, biomeId, rng)
+          const modelKey = typeof modelPick === 'object' && modelPick
+            ? String(modelPick.modelKey || modelPick.url || '')
+            : String(modelPick || '')
           this.treeModelData.push({
             x: baseX,
             y: surfaceHeight,
             z: baseZ,
             modelKey,
             rotationY: rng.random() * Math.PI * 2,
+            desiredHeight: typeof modelPick === 'object' && modelPick ? (Number(modelPick.desiredHeight) || null) : null,
+            colliderRadius: typeof modelPick === 'object' && modelPick ? (Number(modelPick.colliderRadius) || null) : null,
+            colliderHeight: typeof modelPick === 'object' && modelPick ? (Number(modelPick.colliderHeight) || null) : null,
           })
+
+          const radius = Number.isFinite(Number(modelPick?.colliderRadius)) ? Math.max(0, Number(modelPick.colliderRadius)) : 0
+          const trunkHeight = Number.isFinite(Number(modelPick?.colliderHeight)) ? Math.max(1, Math.floor(Number(modelPick.colliderHeight))) : 4
+          const rBlocks = Math.ceil(radius)
+          for (let dx = -rBlocks; dx <= rBlocks; dx++) {
+            for (let dz = -rBlocks; dz <= rBlocks; dz++) {
+              if (dx * dx + dz * dz > (radius * radius + 0.01))
+                continue
+              const ix = baseX + dx
+              const iz = baseZ + dz
+              if (ix < 0 || iz < 0 || ix >= width || iz >= width)
+                continue
+              for (let ty = surfaceHeight + 1; ty <= surfaceHeight + trunkHeight && ty < height; ty++) {
+                this.container.setBlockId(ix, ty, iz, blocks.treeTrunk.id)
+              }
+            }
+          }
+
           stats.treeCount++
           continue
         }
@@ -673,6 +836,32 @@ export default class TerrainGenerator {
     const v = String(vegType || '').toLowerCase()
     const biome = String(biomeId || '').toLowerCase()
     const r = rng?.random ? rng.random() : Math.random()
+
+    const byBiome = this.params?.trees?.modelPoolsByBiome
+    const biomePool = byBiome && (byBiome[biomeId] || byBiome[biome])
+    const modelPool = Array.isArray(biomePool)
+      ? biomePool.filter(Boolean)
+      : (Array.isArray(this.params?.trees?.modelPool) ? this.params.trees.modelPool.filter(Boolean) : null)
+    if (modelPool && modelPool.length > 0) {
+      let total = 0
+      for (const it of modelPool)
+        total += Math.max(0, Number(it.weight) || 1)
+      if (total > 0) {
+        let t = r * total
+        for (const it of modelPool) {
+          t -= Math.max(0, Number(it.weight) || 1)
+          if (t <= 0)
+            return it
+        }
+      }
+      return modelPool[Math.min(modelPool.length - 1, Math.floor(r * modelPool.length))]
+    }
+
+    const pool = Array.isArray(this.params?.trees?.modelKeys)
+      ? this.params.trees.modelKeys.filter(Boolean).map(x => String(x)).filter(Boolean)
+      : null
+    if (pool && pool.length > 0)
+      return pool[Math.min(pool.length - 1, Math.floor(r * pool.length))]
 
     if (v.includes('cherry'))
       return 'tree_3'

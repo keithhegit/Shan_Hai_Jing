@@ -53,8 +53,6 @@ export default class CaptureSystem {
     const threshold = Math.max(1, Math.ceil(maxHp * 0.15))
     if (target.hp > threshold)
       return null
-    if (!target.isStunned?.())
-      return null
     return target
   }
 
@@ -77,10 +75,6 @@ export default class CaptureSystem {
     world._captureTarget = target
     world._captureStartAt = now
     world._captureState = 'channeling'
-
-    if (Number.isFinite(Number(target?._stunnedUntil))) {
-      target._stunnedUntil = Math.max(target._stunnedUntil, now + (world._captureDurationMs ?? 4000) + 250)
-    }
 
     world.player.setControlLocked?.(true)
     world.player.setSpeedMultiplier?.(0)

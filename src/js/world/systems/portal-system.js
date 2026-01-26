@@ -109,12 +109,15 @@ export default class PortalSystem {
 
     const options = (world._dungeonPortals || []).map((p) => {
       const saved = world._portalDungeonProgress?.[p.id] || {}
+      const locked = (p.id === 'mine' && !world._portalUnlocks?.mine) || (p.id === 'hellfire' && !world._portalUnlocks?.hellfire)
       return {
         id: p.id,
         name: p.name,
         completed: !!saved.completed,
         read: saved.read ?? 0,
         total: saved.total ?? 0,
+        locked,
+        lockReason: locked ? '需要购买解锁' : '',
       }
     })
 
@@ -139,6 +142,11 @@ export default class PortalSystem {
     const id = payload?.id
     if (!id)
       return
+    const locked = (id === 'mine' && !world._portalUnlocks?.mine) || (id === 'hellfire' && !world._portalUnlocks?.hellfire)
+    if (locked) {
+      emitter.emit('dungeon:toast', { text: '该地牢需要先在旅行商人处购买解锁' })
+      return
+    }
     const portal = (world._dungeonPortals || []).find(p => p?.id === id)
     if (!portal)
       return

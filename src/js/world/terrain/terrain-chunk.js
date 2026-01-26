@@ -7,6 +7,7 @@
  */
 import * as THREE from 'three'
 import Experience from '../../experience.js'
+import PlantModelRenderer from './plant-model-renderer.js'
 import PlantRenderer from './plant-renderer.js'
 import TerrainContainer from './terrain-container.js'
 import TerrainGenerator from './terrain-generator.js'
@@ -43,6 +44,8 @@ export default class TerrainChunk {
       sharedRenderParams,
       sharedTerrainParams,
       sharedTreeParams,
+      sharedPlantParams,
+      sharedSceneryParams,
       sharedWaterParams,
       sharedBiomeGenerator, // STEP 2: 共享群系生成器
       biomeSource,
@@ -87,6 +90,7 @@ export default class TerrainChunk {
       sharedTerrainParams,
       sharedTreeParams,
       sharedWaterParams,
+      sharedSceneryParams,
       sharedBiomeGenerator, // STEP 2: 传递共享群系生成器
       originX: this.originX,
       originZ: this.originZ,
@@ -118,10 +122,23 @@ export default class TerrainChunk {
     this.renderer.group.scale.setScalar(sharedRenderParams?.scale ?? 1)
 
     // ===== 植物渲染器 =====
-    this.plantRenderer = new PlantRenderer(this.container, {
-      sharedParams: sharedRenderParams,
-      chunkName: `${this.chunkX}, ${this.chunkZ}`,
-    })
+    const usePlantModels = !!sharedPlantParams?.useModels
+    if (usePlantModels) {
+      this.plantRenderer = new PlantModelRenderer(this.container, {
+        sharedParams: sharedRenderParams,
+        sharedPlantParams,
+        chunkName: `${this.chunkX}, ${this.chunkZ}`,
+        originX: this.originX,
+        originZ: this.originZ,
+        seed,
+      })
+    }
+    else {
+      this.plantRenderer = new PlantRenderer(this.container, {
+        sharedParams: sharedRenderParams,
+        chunkName: `${this.chunkX}, ${this.chunkZ}`,
+      })
+    }
     this.plantRenderer.group.position.set(this.originX, 0, this.originZ)
     this.plantRenderer.group.scale.setScalar(sharedRenderParams?.scale ?? 1)
 

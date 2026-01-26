@@ -58,8 +58,14 @@ export default class PointerLockManager {
    * 请求锁定鼠标
    */
   requestLock() {
-    if (this.canvas && this.canvas.requestPointerLock) {
+    if (!this.canvas || !this.canvas.requestPointerLock)
+      return false
+    try {
       this.canvas.requestPointerLock()
+      return true
+    }
+    catch {
+      return false
     }
   }
 

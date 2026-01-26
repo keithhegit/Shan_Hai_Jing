@@ -271,6 +271,162 @@ export const BIOMES = {
     },
   },
 
+  GRASS_HILLS: {
+    id: 'grassHills',
+    name: '草山',
+    tempRange: [0.35, 0.75],
+    humidityRange: [0.25, 0.75],
+    terrainParams: {
+      heightOffset: 0,
+      heightMagnitude: 7.5,
+    },
+    blocks: {
+      surface: BLOCK_IDS.GRASS,
+      subsurface: BLOCK_IDS.DIRT,
+      deep: BLOCK_IDS.STONE,
+    },
+    vegetation: {
+      enabled: true,
+      density: 0.22,
+      types: [
+        {
+          type: 'oak',
+          weight: 1,
+          trunkBlock: BLOCK_IDS.TREE_TRUNK,
+          leavesBlock: BLOCK_IDS.TREE_LEAVES,
+          heightRange: [4, 7],
+          canopyRadius: [3, 5],
+        },
+      ],
+      allowedSurface: [BLOCK_IDS.GRASS],
+    },
+    flora: {
+      enabled: true,
+      density: 0.16,
+      types: [
+        { type: 'shortGrass', plantId: PLANT_IDS.SHORT_GRASS, weight: 7 },
+        { type: 'dandelion', plantId: PLANT_IDS.DANDELION, weight: 1 },
+        { type: 'poppy', plantId: PLANT_IDS.POPPY, weight: 1 },
+        { type: 'oxeyeDaisy', plantId: PLANT_IDS.OXEYE_DAISY, weight: 1 },
+      ],
+      allowedSurface: [BLOCK_IDS.GRASS],
+    },
+  },
+
+  SNOW_MOUNTAINS: {
+    id: 'snowMountains',
+    name: '雪山',
+    tempRange: [0.0, 0.2],
+    humidityRange: [0.0, 0.8],
+    terrainParams: {
+      heightOffset: 2,
+      heightMagnitude: 9.0,
+    },
+    blocks: {
+      surface: BLOCK_IDS.SNOW,
+      subsurface: BLOCK_IDS.ICE,
+      deep: BLOCK_IDS.STONE,
+    },
+    vegetation: {
+      enabled: true,
+      density: 0.03,
+      types: [
+        {
+          type: 'snowProps',
+          weight: 1,
+          trunkBlock: BLOCK_IDS.TREE_TRUNK,
+          leavesBlock: BLOCK_IDS.TREE_LEAVES,
+          heightRange: [3, 5],
+          canopyRadius: [2, 3],
+        },
+      ],
+      allowedSurface: [BLOCK_IDS.SNOW, BLOCK_IDS.ICE, BLOCK_IDS.STONE],
+    },
+    flora: {
+      enabled: false,
+      density: 0,
+      types: [],
+      allowedSurface: [],
+    },
+  },
+
+  MINE: {
+    id: 'mine',
+    name: '矿山',
+    tempRange: [0.25, 0.7],
+    humidityRange: [0.0, 0.35],
+    terrainParams: {
+      heightOffset: -1,
+      heightMagnitude: 5.5,
+    },
+    blocks: {
+      surface: BLOCK_IDS.STONE,
+      subsurface: BLOCK_IDS.STONE,
+      deep: BLOCK_IDS.STONE,
+    },
+    vegetation: {
+      enabled: true,
+      density: 0.025,
+      types: [
+        {
+          type: 'mineProps',
+          weight: 1,
+          trunkBlock: BLOCK_IDS.TREE_TRUNK,
+          leavesBlock: BLOCK_IDS.TREE_LEAVES,
+          heightRange: [3, 5],
+          canopyRadius: [2, 3],
+        },
+      ],
+      allowedSurface: [BLOCK_IDS.STONE, BLOCK_IDS.GRAVEL],
+    },
+    flora: {
+      enabled: false,
+      density: 0,
+      types: [],
+      allowedSurface: [],
+    },
+  },
+
+  DEADLANDS: {
+    id: 'deadlands',
+    name: '死亡之山',
+    tempRange: [0.35, 0.95],
+    humidityRange: [0.0, 0.35],
+    terrainParams: {
+      heightOffset: 0,
+      heightMagnitude: 7.0,
+    },
+    blocks: {
+      surface: BLOCK_IDS.GRAVEL,
+      subsurface: BLOCK_IDS.STONE,
+      deep: BLOCK_IDS.STONE,
+    },
+    vegetation: {
+      enabled: true,
+      density: 0.02,
+      types: [
+        {
+          type: 'deadProps',
+          weight: 1,
+          trunkBlock: BLOCK_IDS.TREE_TRUNK,
+          leavesBlock: BLOCK_IDS.TREE_LEAVES,
+          heightRange: [3, 5],
+          canopyRadius: [2, 3],
+        },
+      ],
+      allowedSurface: [BLOCK_IDS.GRAVEL, BLOCK_IDS.STONE],
+    },
+    flora: {
+      enabled: true,
+      density: 0.035,
+      types: [
+        { type: 'deadBush', plantId: PLANT_IDS.DEAD_BUSH, weight: 2 },
+        { type: 'shortDryGrass', plantId: PLANT_IDS.SHORT_DRY_GRASS, weight: 4 },
+      ],
+      allowedSurface: [BLOCK_IDS.GRAVEL, BLOCK_IDS.STONE],
+    },
+  },
+
   FROZEN_OCEAN: {
     id: 'frozenOcean',
     name: '冻洋',

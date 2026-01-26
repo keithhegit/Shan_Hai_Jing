@@ -30,6 +30,8 @@ export default class ChunkManager {
 
     this.terrainParams = options.terrain || { ...TERRAIN_PARAMS }
     this.treeParams = options.trees || { ...TREE_PARAMS }
+    this.plantParams = options.plants || {}
+    this.sceneryParams = options.scenery || null
     this.renderParams = { ...RENDER_PARAMS }
     this.waterParams = options.water || { ...WATER_PARAMS }
     this.biomeParams = {
@@ -195,6 +197,24 @@ export default class ChunkManager {
         })
         if (hit) {
           removed++
+          const trunkHeight = Number.isFinite(Number(p?.colliderHeight)) ? Math.max(1, Math.floor(Number(p.colliderHeight))) : 4
+          const radius = Number.isFinite(Number(p?.colliderRadius)) ? Math.max(0, Number(p.colliderRadius)) : 0
+          const rBlocks = Math.ceil(radius)
+          const lx = Math.floor(Number(p?.x) || 0)
+          const lz = Math.floor(Number(p?.z) || 0)
+          const baseY = Math.floor(Number(wy) || 0) + 1
+          const height = this.chunkHeight ?? 64
+          for (let dx = -rBlocks; dx <= rBlocks; dx++) {
+            for (let dz = -rBlocks; dz <= rBlocks; dz++) {
+              if (dx * dx + dz * dz > (radius * radius + 0.01))
+                continue
+              const ix = lx + dx
+              const iz = lz + dz
+              for (let ty = baseY; ty <= baseY + trunkHeight && ty < height; ty++) {
+                chunk.generator?.container?.setBlockId?.(ix, ty, iz, blocks.empty.id)
+              }
+            }
+          }
           continue
         }
         next.push(p)
@@ -439,6 +459,8 @@ export default class ChunkManager {
       sharedTerrainParams: this.terrainParams,
       sharedRenderParams: this.renderParams,
       sharedTreeParams: this.treeParams,
+      sharedPlantParams: this.plantParams,
+      sharedSceneryParams: this.sceneryParams,
       sharedWaterParams: this.waterParams,
       sharedBiomeGenerator: this.biomeGenerator, // STEP 2: 共享群系生成器
       biomeSource: this.biomeParams.biomeSource,

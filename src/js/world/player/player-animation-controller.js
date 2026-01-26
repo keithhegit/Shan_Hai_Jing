@@ -127,19 +127,25 @@ export class PlayerAnimationController {
     })
   }
 
-  setStaticPose(name, weight = 0.85) {
+  updateMixerOnly(dt) {
+    this.mixer.update(dt * 0.001)
+  }
+
+  setStaticPoseAt(name, time01 = 1, weight = 0.85) {
     const action = this.actions[name]
     if (!action)
       return false
 
     const clip = action.getClip?.()
     const duration = Math.max(0, clip?.duration ?? 0)
+    const t = Math.max(0, Math.min(1, Number(time01)))
+    const poseTime = duration * t
     const nextWeight = Math.max(0, Math.min(1, Number(weight) || 0))
 
     if (this._staticPoseAction === action) {
       action.enabled = true
       action.setEffectiveWeight(nextWeight)
-      action.time = duration
+      action.time = poseTime
       action.paused = true
       return true
     }
@@ -151,10 +157,14 @@ export class PlayerAnimationController {
     action.setLoop(THREE.LoopOnce, 1)
     action.clampWhenFinished = true
     action.play()
-    action.time = duration
+    action.time = poseTime
     action.paused = true
 
     return true
+  }
+
+  setStaticPose(name, weight = 0.85) {
+    return this.setStaticPoseAt(name, 1, weight)
   }
 
   clearStaticPose() {

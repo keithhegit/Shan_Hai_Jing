@@ -45,7 +45,7 @@ export default class DungeonSystem {
         : total > 0
           ? '按 E 返回（探索完成）'
           : '按 E 返回'
-      const payload = { title: '返回超平坦', hint }
+      const payload = { title: '返回 Camazots', hint }
 
       if (!world._activeDungeonExit)
         world._activeDungeonExit = world._dungeonExit
@@ -101,7 +101,6 @@ export default class DungeonSystem {
             world.isPaused = false
             world._emitDungeonState?.()
             emitter.emit('loading:hide')
-            world.experience.pointerLock?.requestLock?.()
           }, 6250)
           return
         }
@@ -200,16 +199,25 @@ export default class DungeonSystem {
     world._activeInteractable = null
     world._dungeonName = portal.name
     world._activeDungeonPortalId = portal.id
+    world._activeDungeonPortal = {
+      id: portal.id,
+      name: portal.name,
+      target: portal.target ? { ...portal.target } : null,
+      color: portal.color ?? null,
+    }
     world._dungeonRewardPending = reward || null
     world._dungeonRewardSpawned = false
     world._dungeonSurfaceY = Number.isFinite(Number(surfaceY)) ? (Number(surfaceY) + 0.05) : null
     world._dungeonSpawn = spawn ? { ...spawn } : null
+    world._startDungeonRun?.()
 
     world._initDungeonInteractablesV2(interactables, portal.id)
     if (portal.id === 'mine')
       world._initMineOres(spawn)
 
-    const saved = world._portalDungeonProgress?.[portal.id]
+    const ignoreSaved = !!world._ignorePortalDungeonProgressOnce
+    world._ignorePortalDungeonProgressOnce = false
+    const saved = ignoreSaved ? null : world._portalDungeonProgress?.[portal.id]
     if (saved && world._dungeonInteractables) {
       const readCount = Math.min(saved.read ?? 0, world._dungeonInteractables.length)
       for (let i = 0; i < readCount; i++) {
@@ -239,6 +247,36 @@ export default class DungeonSystem {
 
     world._dungeonEnemies = []
 
+    const findSafeEnemySpawn = (pos, enemy) => {
+      const cm = world.chunkManager
+      if (!cm?.forceSyncGenerateArea)
+        return pos
+      const y = Number.isFinite(Number(world._dungeonSurfaceY)) ? Number(world._dungeonSurfaceY) : Number(pos?.y)
+      const r = Math.max(0.6, Number(enemy?.hitRadius) || 0.9)
+      const baseX = Math.floor(Number(pos?.x) || 0) + 0.5
+      const baseZ = Math.floor(Number(pos?.z) || 0) + 0.5
+
+      cm.forceSyncGenerateArea(baseX, baseZ, 1)
+      if (world.dungeonEnemySystem?.canOccupyAt?.(baseX, baseZ, y, r))
+        return { x: baseX, y, z: baseZ }
+
+      for (let ring = 1; ring <= 10; ring++) {
+        for (let dx = -ring; dx <= ring; dx++) {
+          for (let dz = -ring; dz <= ring; dz++) {
+            if (Math.abs(dx) !== ring && Math.abs(dz) !== ring)
+              continue
+            const x = baseX + dx
+            const z = baseZ + dz
+            cm.forceSyncGenerateArea(x, z, 1)
+            if (world.dungeonEnemySystem?.canOccupyAt?.(x, z, y, r))
+              return { x, y, z }
+          }
+        }
+      }
+
+      return { x: baseX, y, z: baseZ }
+    }
+
     enemies.forEach((pos) => {
       const isBoss = !!pos.isBoss
       const enemyType = String(pos?.type || '').trim() || 'skeleton'
@@ -254,17 +292,20 @@ export default class DungeonSystem {
         type: enemyType,
         hp,
       })
+      const safe = findSafeEnemySpawn(pos, enemy)
+      enemy.group.position.set(safe.x, safe.y + 0.1, safe.z)
       enemy.isBoss = isBoss
       enemy.behavior = {
         state: 'walk',
         timer: 2 + Math.random() * 2,
-        home: { x: pos.x, z: pos.z },
+        home: { x: safe.x, z: safe.z },
         radius: 4 + Math.random() * 2,
         targetDir: enemy.group.rotation.y,
       }
       enemy.playLocomotion?.()
       enemy.addTo(world._dungeonEnemiesGroup)
       world._dungeonEnemies.push(enemy)
+      world.dungeonEnemySystem?.resolveIfInsideSolid?.(enemy)
     })
 
     world._activePortalId = null
@@ -304,7 +345,7 @@ export default class DungeonSystem {
     world._emitDungeonState()
     emitter.emit('portal:prompt_clear')
     emitter.emit('interactable:prompt_clear')
-    emitter.emit('loading:show', { title: '正在返回：超平坦世界' })
+    emitter.emit('loading:show', { title: '正在返回：Camazots' })
 
     setTimeout(() => {
       world.currentWorld = 'hub'
@@ -331,6 +372,10 @@ export default class DungeonSystem {
       world._dungeonProgress = null
       world._dungeonCompleted = false
       world._activeDungeonPortalId = null
+      if (world._dungeonRun)
+        world._dungeonRun.ended = true
+      world._dungeonRun = null
+      world._activeDungeonPortal = null
       world._dungeonSurfaceY = null
       world._dungeonSpawn = null
       world._activeDungeonExitPrompt = null
@@ -346,6 +391,7 @@ export default class DungeonSystem {
       world._clearNameLabelsByScope('dungeon')
       world._dungeonGroup?.clear?.()
       emitter.emit('dungeon:progress_clear')
+      emitter.emit('dungeon:timer', null)
       emitter.emit('dungeon:toast_clear')
 
       if (world.environment) {

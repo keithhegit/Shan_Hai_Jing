@@ -132,7 +132,7 @@ export default class DungeonWorld {
       {
         position: new THREE.Vector3(-2, 1, 15),
         title: '古老的卷轴',
-        content: '上面记载着关于“超平坦世界”的传说，似乎这个世界是由某种古老的算法生成的...',
+        content: '上面记载着关于“Camazots”的传说，似乎这个世界是由某种古老的算法生成的...',
       },
       {
         position: new THREE.Vector3(2, 1, 35),

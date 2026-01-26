@@ -164,6 +164,12 @@ export default class DropSystem {
       world._addInventoryItem('backpack', itemId, n)
       if (String(itemId).startsWith('canister_') && canisterMeta)
         world.inventorySystem?.recordCanisterMeta?.(itemId, canisterMeta)
+      if (world.currentWorld === 'dungeon' && world._dungeonRun && !world._dungeonRun.ended) {
+        world._dungeonRun.lootCount = (world._dungeonRun.lootCount || 0) + n
+        if (!world._dungeonRun.lootByItemId)
+          world._dungeonRun.lootByItemId = {}
+        world._dungeonRun.lootByItemId[itemId] = (world._dungeonRun.lootByItemId[itemId] || 0) + n
+      }
       emitter.emit('dungeon:toast', { text: `获得：${label} x${n}（已放入背包）` })
       world._scheduleInventorySave()
       world._emitInventorySummary()

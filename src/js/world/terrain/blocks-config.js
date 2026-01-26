@@ -41,6 +41,11 @@ export const BLOCK_IDS = {
   // snowLayer (ID: 20) 暂不实现（纹理缺失）
   // 其他
   GRAVEL: 21,
+  DIAMOND_ORE: 22,
+  BRICKS_DARK: 23,
+  MARK_EXCLAMATION: 24,
+  MARK_QUESTION: 25,
+  WOOD_PLANKS: 26,
 }
 
 // 植物 ID 常量（使用 200+ 区间与方块区分）
@@ -138,6 +143,17 @@ export const blocks = {
     scale: { x: 20, y: 20, z: 20 },
     scarcity: 0.8,
   },
+  diamondOre: {
+    id: BLOCK_IDS.DIAMOND_ORE,
+    name: 'diamond_ore',
+    visible: true,
+    modelKey: 'cube_diamond',
+    textureKeys: {
+      all: 'stone',
+    },
+    scale: { x: 14, y: 20, z: 14 },
+    scarcity: 0.93,
+  },
   ironOre: {
     id: BLOCK_IDS.IRON_ORE,
     name: 'iron_ore',
@@ -152,7 +168,7 @@ export const blocks = {
   treeTrunk: {
     id: BLOCK_IDS.TREE_TRUNK,
     name: 'tree_trunk',
-    visible: true,
+    visible: false,
     modelKey: 'cube_wood',
     modelTint: 0xC49A6C,
     // 树干：六面贴图（侧面/顶面）
@@ -165,7 +181,7 @@ export const blocks = {
   treeLeaves: {
     id: BLOCK_IDS.TREE_LEAVES,
     name: 'tree_leaves',
-    visible: true,
+    visible: false,
     modelKey: 'cube_leaves',
     modelTint: 0x6AAE5A,
     // 树叶：使用 alphaTest 构建镂空效果
@@ -322,6 +338,42 @@ export const blocks = {
       all: 'gravel_Texture',
     },
   },
+  bricksDark: {
+    id: BLOCK_IDS.BRICKS_DARK,
+    name: 'bricks_dark',
+    visible: true,
+    modelKey: 'cube_bricks_dark',
+    textureKeys: {
+      all: 'stone',
+    },
+  },
+  markExclamation: {
+    id: BLOCK_IDS.MARK_EXCLAMATION,
+    name: 'mark_exclamation',
+    visible: true,
+    modelKey: 'cube_exclamation',
+    textureKeys: {
+      all: 'stone',
+    },
+  },
+  markQuestion: {
+    id: BLOCK_IDS.MARK_QUESTION,
+    name: 'mark_question',
+    visible: true,
+    modelKey: 'cube_question_mark',
+    textureKeys: {
+      all: 'stone',
+    },
+  },
+  woodPlanks: {
+    id: BLOCK_IDS.WOOD_PLANKS,
+    name: 'wood_planks',
+    visible: true,
+    modelKey: 'cube_wood_planks',
+    textureKeys: {
+      all: 'stone',
+    },
+  },
 }
 
 // 需要通过 3D 噪声生成的矿产列表
@@ -329,6 +381,7 @@ export const resources = [
   blocks.stone,
   blocks.coalOre,
   blocks.ironOre,
+  blocks.diamondOre,
 ]
 
 export function getBlockModelAsset(blockType, resourceItems) {
@@ -357,6 +410,15 @@ export function getBlockModelAsset(blockType, resourceItems) {
     const center = new THREE.Vector3()
     box.getCenter(center)
     geometry.translate(-center.x, -center.y, -center.z)
+
+    const size = new THREE.Vector3()
+    box.getSize(size)
+    const maxDim = Math.max(size.x || 0, size.y || 0, size.z || 0)
+    if (maxDim > 0 && Math.abs(maxDim - 1) > 1e-4) {
+      const s = 1 / maxDim
+      geometry.scale(s, s, s)
+      geometry.computeBoundingBox()
+    }
   }
   geometry.computeBoundingSphere()
 
@@ -366,6 +428,13 @@ export function getBlockModelAsset(blockType, resourceItems) {
   const applyOverrides = (mat) => {
     if (!mat)
       return
+    if (mat.map) {
+      mat.map.magFilter = THREE.NearestFilter
+      mat.map.minFilter = THREE.NearestFilter
+      mat.map.colorSpace = THREE.SRGBColorSpace
+      mat.map.generateMipmaps = false
+      mat.map.needsUpdate = true
+    }
     if (tintColor && mat.color) {
       if (mat.map)
         mat.color.multiply(tintColor)

@@ -80,6 +80,7 @@ export default class CombatSystem {
       return
     }
 
+    const now = world.experience.time?.elapsed ?? 0
     const target = world._lockedEnemy
     const validTarget = !!target?.group && !target?.isDead
     if (!world._isMaterialGunFiring || !validTarget) {
@@ -89,7 +90,7 @@ export default class CombatSystem {
     }
 
     const cfg = world._npcStats?.material_gun || {}
-    const maxRange = Number.isFinite(cfg.maxRange) ? cfg.maxRange : 24
+    const maxRange = Number.isFinite(cfg.maxRange) ? cfg.maxRange : 14
     const tickMs = Math.max(120, Math.floor(Number(cfg.tickMs) || 900))
     const tickDamage = Math.max(1, Math.floor(Number(cfg.tickDamage) || 1))
 
@@ -104,6 +105,10 @@ export default class CombatSystem {
     if (d2 > maxRange * maxRange) {
       world._materialGunBeam.visible = false
       world.player.setMatterGunAiming(false)
+      if (now - (this._rangeWarnAt || 0) >= 1000) {
+        this._rangeWarnAt = now
+        emitter.emit('dungeon:toast', { text: '射程不足' })
+      }
       return
     }
 
@@ -118,7 +123,6 @@ export default class CombatSystem {
     world._materialGunBeam.visible = true
     world.player.setMatterGunAiming(true)
 
-    const now = world.experience.time?.elapsed ?? 0
     if (now - world._materialGunLastDamageAt < tickMs)
       return
     world._materialGunLastDamageAt = now
