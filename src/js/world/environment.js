@@ -109,7 +109,7 @@ export default class Environment {
     this.backgroundTexture = this.resources.items.backgroundTexture
     if (this.backgroundTexture) {
       this.backgroundTexture.colorSpace = THREE.SRGBColorSpace
-      this.backgroundTexture.mapping = THREE.UVMapping
+      this.backgroundTexture.mapping = THREE.EquirectangularReflectionMapping
     }
 
     this.scene.environment = this.environmentMap.texture

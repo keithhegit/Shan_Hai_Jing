@@ -46,6 +46,7 @@ export const BLOCK_IDS = {
   MARK_EXCLAMATION: 24,
   MARK_QUESTION: 25,
   WOOD_PLANKS: 26,
+  INVISIBLE_SOLID: 27,
 }
 
 // 植物 ID 常量（使用 200+ 区间与方块区分）
@@ -99,6 +100,11 @@ export const blocks = {
   empty: {
     id: BLOCK_IDS.EMPTY,
     name: 'empty',
+    visible: false,
+  },
+  invisibleSolid: {
+    id: BLOCK_IDS.INVISIBLE_SOLID,
+    name: 'invisible_solid',
     visible: false,
   },
   grass: {

@@ -129,23 +129,6 @@ export default class MerchantSystem {
       this._ready = true
     }
 
-    if (this._rabbit && world.player?.group?.position) {
-      const p = world.player.group.position
-      const cx = this._pos.x
-      const cz = this._pos.z
-      const dx = p.x - cx
-      const dz = p.z - cz
-      const r = 1.1
-      const d2 = dx * dx + dz * dz
-      if (d2 > 0.000001 && d2 < r * r) {
-        const d = Math.sqrt(d2)
-        const nx = dx / d
-        const nz = dz / d
-        p.x = cx + nx * r
-        p.z = cz + nz * r
-      }
-    }
-
     if (this._mixer)
       this._mixer.update(Math.min(0.05, Number(dt) || 0))
 

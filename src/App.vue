@@ -91,6 +91,7 @@ const quickCanisterVisible = computed(() => {
 const quickHudSlots = computed(() => {
   const backpack = inventoryData.value?.backpack || {}
   const hasGun = (Number(backpack?.material_gun) || 0) > 0
+  const hasPickaxe = (Number(backpack?.Pickaxe_Wood) || 0) > 0
   const hasFenceCenter = (Number(backpack?.Fence_Center) || 0) > 0
   const hasFenceCorner = (Number(backpack?.Fence_Corner) || 0) > 0
   const weapon = {
@@ -105,6 +106,15 @@ const quickHudSlots = computed(() => {
       return { kind: 'empty', key: quickHudKeys[i + 1], enabled: false }
     return { kind: 'canister', key: quickHudKeys[i + 1], entry, enabled: true }
   })
+  if (hasPickaxe) {
+    const pick = { kind: 'tool', itemId: 'Pickaxe_Wood', iconSrc: gridItemBaseIconSrc('Pickaxe_Wood'), enabled: true }
+    for (let i = 0; i < rest.length; i++) {
+      if (rest[i]?.kind === 'empty') {
+        rest[i] = { ...pick, key: rest[i].key }
+        break
+      }
+    }
+  }
   if (hasFenceCenter || hasFenceCorner) {
     const fillers = []
     if (hasFenceCenter)
@@ -138,6 +148,10 @@ function triggerQuickHotkey(key) {
     return
   if (slot.kind === 'weapon') {
     emitter.emit('inventory:equip', { itemId: 'material_gun' })
+    return
+  }
+  if (slot.kind === 'tool' && slot.itemId) {
+    emitter.emit('inventory:equip', { itemId: slot.itemId })
     return
   }
   if (slot.kind === 'canister' && slot.entry) {
@@ -992,7 +1006,8 @@ function rotateDraggedGridItem() {
 }
 
 function gridItemBaseIconSrc(itemId) {
-  const id = String(itemId || '')
+  const raw = String(itemId || '')
+  const id = raw.replace(/\.(gltf|glb)$/i, '')
   if (id === 'coin')
     return '/img/icons/coin.jpg'
   if (id === 'crystal_small')
@@ -1013,9 +1028,7 @@ function gridItemBaseIconSrc(itemId) {
     return `/img/icons/${id}.png`
   if (id.startsWith('Axe_'))
     return '/img/icons/Axe.jpg'
-  if (id === 'Pickaxe_Wood')
-    return '/img/icons/pickaxe.jpg'
-  if (id.startsWith('Pickaxe_'))
+  if (id === 'Pickaxe_Wood' || id.startsWith('Pickaxe_'))
     return '/img/icons/Pickaxe.jpg'
   if (id.startsWith('Shovel_'))
     return '/img/icons/Shovel.jpg'

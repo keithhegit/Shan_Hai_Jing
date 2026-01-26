@@ -138,12 +138,11 @@
 - 中键锁定/解除：已实装；并且不再因拾取/交互提示而失效
 - 脚底红色圆环：已实装（锁定时显示）
 - 头顶血条：已实装（锁定时显示）
-- 镜头与转向：已实装（相机与主控朝向会对齐锁定目标）
+- 镜头与转向：锁定不再驱动相机追踪；相机保持默认尾追视角；主控朝向仍可平滑对齐目标（用于减少空挥与稳定射线）
 - Vignette / 锁定准星圆圈收缩 / 红色高亮：未统一落地（可作为下一轮增强项）
 
 镜头与转向（锁定模式）：
 
-- 锁定时，相机 Rig 朝向敌人，并将注视点设置为“玩家与敌人中点 + 目标高度偏移”
 - 锁定时，World 会持续将主控朝向平滑对齐目标，减少空挥
 
 结束表现：
@@ -217,6 +216,7 @@
 
 操作说明（HUD 必须提示）：
 
+- `R`：旋转方向
 - `T`：切换“建造 / 拆卸”模式
 - 鼠标左键：执行当前模式的操作（建造=放置；拆卸=拆除）
 
@@ -227,7 +227,8 @@
 
 约束：
 
-- 放置成功后消耗 1 个对应 Fence 道具，并在场景中生成一个**实心方块围栏**（具备碰撞，不可穿过）
+- 放置成功后消耗 1 个对应 Fence 道具，并在场景中生成 Fence 围栏模型
+- 围栏必须具备碰撞体积，玩家与小动物都无法穿过（实现上可用“隐形碰撞方块”承载阻挡）
 - 拆除成功后返还 1 个 Fence 道具（若背包满，则掉落到地面可拾取）
 
 ### 2.8 鱼（已移除）
@@ -267,10 +268,11 @@
 目标：
 
 - 新增可购买道具：鹤嘴镐（模型 `Tools/Pickaxe_Wood.gltf`）
-- Icon：`img/icons/pickaxe.jpg`
+- Icon：`img/icons/Pickaxe.jpg`
 - 价格：5 金币
 - 背包占格：`1x2`（竖放）
 - 若背包满：购买后掉落在地上（可拾取）
+- 获取后：自动出现在 **1-0 快捷栏**的空位中，并可被装备（按数字键触发）
 
 挖矿交互（矿山）：
 
@@ -278,6 +280,7 @@
 - 挖矿过程：
   - 播放主控动画 `Punch`
   - 将鹤嘴镐挂到主控右手（挖矿期间保持手持）
+  - 手持模型方向：镐头朝外（如资产默认朝向相反，则对模型做 180° 翻转）
   - 显示挖矿进度条 5 秒；5 秒内主控不能做其他动作
   - 完成后获得 1 个道具 `crystal_small`（Icon `img/icons/crystal_small.jpg`）
 
@@ -326,7 +329,7 @@
 
 | itemId          | 类型         | 背包占格 | Icon_img                         | 备注                     |
 | --------------- | ------------ | -------- | -------------------------------- | ------------------------ |
-| `Pickaxe_Wood`  | `tool`       | 1×2      | `img/icons/pickaxe.jpg`          | 商店购买；用于挖矿       |
+| `Pickaxe_Wood`  | `tool`       | 1×2      | `img/icons/Pickaxe.jpg`          | 商店购买；用于挖矿       |
 | `crystal_small` | `material`   | 1×1      | `img/icons/crystal_small.jpg`    | 挖矿产物；也用于兑换     |
 | `pet_potion`    | `consumable` | 1×1      | `img/icons/Potion2_Filled.jpg`   | 恢复灵兽；替代金币恢复   |
 | `Fence_Center`  | `build`      | 1×1      | `img/icons/Fence_Center.jpg`     | 牧场仓库领取；用于建造   |
@@ -446,8 +449,8 @@ Dungeon 捕捉产出规则（当前实现）：
 | `coin`            | 货币              | Stack    | 1×1             | `img/icons/coin.jpg`            | 64×64        |
 | `stone`           | 材料              | Instance | 1×1             | `img/icons/stone.png`           | 64×64        |
 | `fence`           | 任务奖励/材料     | Instance | 1×1             | `img/icons/fence.png`           | 64×64        |
-| `crystal_small`   | 地牢矿物          | Instance | 1×1             | `img/icons/crystal_small.jpg`   | 64×64        |
-| `crystal_big`     | 地牢矿物          | Instance | 1×1             | `img/icons/crystal_big.jpg`     | 64×64        |
+| `crystal_small`   | 地牢矿物          | Stack    | 1×1             | `img/icons/crystal_small.jpg`   | 64×64        |
+| `crystal_big`     | 地牢矿物          | Stack    | 1×1             | `img/icons/crystal_big.jpg`     | 64×64        |
 | `material_gun`    | 武器（主手）      | Instance | 1×2             | `img/icons/material_gun.jpg`    | 64×128       |
 | `key_plains`      | 钥匙              | Stack    | 1×2             | `img/icons/key_plains.jpg`      | 64×128       |
 | `key_snow`        | 钥匙              | Stack    | 1×2             | `img/icons/key_snow.jpg`        | 64×128       |
@@ -512,7 +515,7 @@ Dungeon 捕捉产出规则（当前实现）：
 
 - `inventory:equip`：{ itemId }
 - `input:lock_on`：鼠标中键触发锁定/解除（由 InputManager 广播）
-- `combat:toggle_lock`：锁定目标的 Object3D（由 World 广播给相机 Rig）
+- `combat:toggle_lock`：锁定目标的 Object3D（由 World 广播；用于 UI/VFX 状态识别，相机不再跟随）
 - `combat:lock` / `combat:lock_clear`：锁定提示与 UI 状态（由 World 广播给 UI/后处理）
 - `pet:equip_canister`：{ itemId }（可选：与 `inventory:equip` 合并；本轮规划把 `canister_*` 也视为可装备）
 - `pet:throw_aim`：{ enabled }（进入/退出投掷瞄准态，用于显示抛物线）

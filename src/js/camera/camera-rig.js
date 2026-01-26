@@ -45,10 +45,6 @@ export default class CameraRig {
     // Target
     this.target = null
     this._lookAtOverride = null
-    this.lockedTarget = null
-    this.isLocked = false
-    this._tmpEnemyWorldPos = new THREE.Vector3()
-    this._tmpLookAtMidpoint = new THREE.Vector3()
 
     // 初始化时记录偏移量的绝对值，用于切换时的基准
     this._cachedMagnitude = Math.abs(this.config.follow.offset.x)
@@ -73,21 +69,6 @@ export default class CameraRig {
 
     // Event Listeners
     this._setupEventListeners()
-
-    // 监听锁定事件
-    this._onCombatToggleLock = this._handleToggleLock.bind(this)
-    emitter.on('combat:toggle_lock', this._onCombatToggleLock)
-  }
-
-  _handleToggleLock(target) {
-    if (target) {
-      this.isLocked = true
-      this.lockedTarget = target
-    }
-    else {
-      this.isLocked = false
-      this.lockedTarget = null
-    }
   }
 
   _setupEventListeners() {
@@ -289,24 +270,10 @@ export default class CameraRig {
     this.targetAnchor.position.y += this.mouseYOffset
 
     // 5. Smooth Follow (Position)
-    if (this.isLocked && this.lockedTarget) {
-      // 锁定模式：相机位于玩家后方，且注视 玩家+敌人 中点
-      this._smoothedPosition.lerp(playerPos, this.config.follow.smoothSpeed)
-      this.group.position.copy(this._smoothedPosition)
-
-      // 让 Rig 朝向敌人
-      this.lockedTarget.getWorldPosition(this._tmpEnemyWorldPos)
-      const dx = this._tmpEnemyWorldPos.x - playerPos.x
-      const dz = this._tmpEnemyWorldPos.z - playerPos.z
-      const angle = Math.atan2(dx, dz)
-      this.group.rotation.y = angle
-    }
-    else {
-      // 普通模式：跟随玩家朝向
-      this._smoothedPosition.lerp(playerPos, this.config.follow.smoothSpeed)
-      this.group.position.copy(this._smoothedPosition)
-      this.group.rotation.y = facingAngle
-    }
+    // 保持默认尾追视角：锁定只用于确定射线目标，不影响相机追踪
+    this._smoothedPosition.lerp(playerPos, this.config.follow.smoothSpeed)
+    this.group.position.copy(this._smoothedPosition)
+    this.group.rotation.y = facingAngle
 
     // Update matrices to ensuregetWorldPosition is correct
     this.group.updateMatrixWorld(true)
@@ -319,22 +286,7 @@ export default class CameraRig {
     const cameraPos = new THREE.Vector3()
     const targetPos = new THREE.Vector3()
     this.cameraAnchor.getWorldPosition(cameraPos)
-
-    if (this.isLocked && this.lockedTarget) {
-      // 锁定模式：注视点为 玩家+敌人 中点
-      this.lockedTarget.getWorldPosition(this._tmpEnemyWorldPos)
-      this._tmpLookAtMidpoint.set(
-        (playerPos.x + this._tmpEnemyWorldPos.x) * 0.5,
-        (playerPos.y + this._tmpEnemyWorldPos.y) * 0.5,
-        (playerPos.z + this._tmpEnemyWorldPos.z) * 0.5,
-      )
-      targetPos.copy(this._tmpLookAtMidpoint)
-      targetPos.y += 1.5
-    }
-    else {
-      // 普通模式：使用 Anchor
-      this.targetAnchor.getWorldPosition(targetPos)
-    }
+    this.targetAnchor.getWorldPosition(targetPos)
 
     if (this._lookAtOverride)
       targetPos.copy(this._lookAtOverride)
@@ -789,8 +741,6 @@ export default class CameraRig {
       emitter.off('pointer:unlocked', this._onPointerUnlocked)
     if (this._onWheel)
       emitter.off('input:wheel', this._onWheel)
-    if (this._onCombatToggleLock)
-      emitter.off('combat:toggle_lock', this._onCombatToggleLock)
 
     // Clear references
     this.target = null

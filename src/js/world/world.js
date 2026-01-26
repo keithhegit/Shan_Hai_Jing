@@ -435,6 +435,7 @@ export default class World {
       this._initInteractables()
       this._initHubAutomation()
       this._initAnimals()
+      this._applyHubTerrainPatches()
       this.chunkManager?.removeTreesInWorldRadius?.(warehouseX, warehouseZ, 8)
       this.chunkManager?.removePlantsInWorldRadius?.(warehouseX, warehouseZ, 8)
 
@@ -854,14 +855,19 @@ export default class World {
 
   _equipInventoryItem(payload) {
     const itemId = payload?.itemId
-    const id = itemId ? String(itemId) : ''
+    const raw = itemId ? String(itemId) : ''
+    const id = raw.replace(/\.(gltf|glb)$/i, '')
     const isBuild = id === 'Fence_Center' || id === 'Fence_Corner'
-    if (!isBuild && id !== 'material_gun' && !id.startsWith('canister_'))
+    const isTool = id === 'Pickaxe_Wood' || id.startsWith('Pickaxe_')
+    if (!isBuild && !isTool && id !== 'material_gun' && !id.startsWith('canister_'))
       return
     const items = this._getBagItems('backpack')
     const count = Math.max(0, Math.floor(Number(items?.[id]) || 0))
     if (count <= 0) {
-      emitter.emit('dungeon:toast', { text: id === 'material_gun' ? '背包里没有灵兽石' : (isBuild ? '背包里没有 Fence 道具' : '背包里没有收容罐') })
+      const text = id === 'material_gun'
+        ? '背包里没有灵兽石'
+        : (isBuild ? '背包里没有 Fence 道具' : (isTool ? '背包里没有鹤嘴镐' : '背包里没有收容罐'))
+      emitter.emit('dungeon:toast', { text })
       return
     }
 
@@ -896,6 +902,13 @@ export default class World {
       if (!next)
         this._stopMaterialGunFire()
       emitter.emit('dungeon:toast', { text: next ? '已装备灵兽石' : '已收起灵兽石' })
+      return
+    }
+
+    if (isTool) {
+      this._equippedToolItemId = this._equippedToolItemId === id ? null : id
+      const label = id.startsWith('Pickaxe_') ? '鹤嘴镐' : '工具'
+      emitter.emit('dungeon:toast', { text: this._equippedToolItemId ? `已装备：${label}` : `已收起：${label}` })
       return
     }
 
@@ -1610,7 +1623,7 @@ export default class World {
       child.frustumCulled = false
       if (child.material) {
         child.material.side = THREE.FrontSide
-        child.material.transparent = true
+        child.material.transparent = false
       }
     })
 
@@ -1635,12 +1648,12 @@ export default class World {
     const hand = this.player?._findHandBone?.() || null
     if (hand?.add) {
       hold.position.set(0.05, 0.02, 0.0)
-      hold.rotation.set(Math.PI * 0.2, 0, Math.PI * 0.6)
+      hold.rotation.set(Math.PI * 0.2, Math.PI, Math.PI * 0.6)
       hand.add(hold)
     }
     else {
       hold.position.set(0.58, 1.0, 0.18)
-      hold.rotation.set(0, Math.PI * 0.5, Math.PI * 0.6)
+      hold.rotation.set(0, Math.PI * 1.5, Math.PI * 0.6)
       this.player.movement?.group?.add?.(hold)
     }
 
@@ -3092,6 +3105,60 @@ export default class World {
 
   _initAnimals() {
     return this.hubNpcSystem?.initAnimals?.()
+  }
+
+  _applyHubTerrainPatches() {
+    const cm = this.chunkManager
+    if (!cm)
+      return
+
+    const targetY = 5
+    const minX = Math.floor(Math.min(60.0, 66.1, 60.1, 66.0))
+    const maxX = Math.floor(Math.max(60.0, 66.1, 60.1, 66.0))
+    const minZ = Math.floor(Math.min(28.9, 31.2, 15.0, 20.6))
+    const maxZ = Math.floor(Math.max(28.9, 31.2, 15.0, 20.6))
+
+    for (let x = minX; x <= maxX; x++) {
+      for (let z = minZ; z <= maxZ; z++) {
+        const surface = this._getSurfaceY(x, z)
+        const surfaceY = Number.isFinite(Number(surface)) ? Math.floor(Number(surface)) : targetY
+        if (surfaceY < targetY) {
+          for (let y = surfaceY + 1; y < targetY; y++)
+            cm.addBlockWorld?.(x, y, z, blocks.dirt.id)
+          cm.addBlockWorld?.(x, targetY, z, blocks.grass.id)
+        }
+        else if (surfaceY > targetY) {
+          for (let y = targetY + 1; y <= surfaceY; y++)
+            cm.removeBlockWorld?.(x, y, z)
+          cm.addBlockWorld?.(x, targetY, z, blocks.grass.id)
+        }
+        else {
+          cm.addBlockWorld?.(x, targetY, z, blocks.grass.id)
+        }
+      }
+    }
+
+    const merchantX = 36.6
+    const merchantZ = 37.6
+    const bx = Math.floor(merchantX)
+    const bz = Math.floor(merchantZ)
+    const surface = this._getSurfaceY(merchantX, merchantZ)
+    const platformY = Math.floor(Number.isFinite(Number(surface)) ? Number(surface) : 0)
+
+    for (let x = bx - 1; x <= bx + 1; x++) {
+      for (let z = bz - 1; z <= bz + 1; z++) {
+        const s = this._getSurfaceY(x + 0.5, z + 0.5)
+        const sy = Math.floor(Number.isFinite(Number(s)) ? Number(s) : platformY)
+        if (sy < platformY) {
+          for (let y = sy + 1; y < platformY; y++)
+            cm.addBlockWorld?.(x, y, z, blocks.dirt.id)
+        }
+        cm.addBlockWorld?.(x, platformY, z, blocks.woodPlanks.id)
+      }
+    }
+
+    cm.addBlockWorld?.(bx, platformY + 1, bz, blocks.invisibleSolid.id)
+    cm.addBlockWorld?.(bx, platformY + 2, bz, blocks.invisibleSolid.id)
   }
 
   _updateAnimals() {
