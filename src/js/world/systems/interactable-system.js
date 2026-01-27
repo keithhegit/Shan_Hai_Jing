@@ -260,6 +260,7 @@ export default class InteractableSystem {
         actions.push({ id: 'shop_buy:pickaxe', label: '购买：鹤嘴镐（5 金币）' })
         actions.push({ id: 'shop_buy:pet_potion', label: '兑换：灵兽补充剂（3 水晶碎片）' })
         actions.push({ id: 'shop_buy:revive_potion', label: '购买：复活药（5 水晶碎片）' })
+        actions.push({ id: 'shop_heal_5hp', label: '恢复体力（+5 HP，免费）' })
         actions.push({ id: 'shop_sell', label: '卖出（打开背包）' })
         payload.actions = actions
       }
@@ -355,6 +356,7 @@ export default class InteractableSystem {
       actions.push({ id: 'shop_buy:pickaxe', label: '购买：鹤嘴镐（5 金币）' })
       actions.push({ id: 'shop_buy:pet_potion', label: '兑换：灵兽补充剂（3 水晶碎片）' })
       actions.push({ id: 'shop_buy:revive_potion', label: '购买：复活药（5 水晶碎片）' })
+      actions.push({ id: 'shop_heal_5hp', label: '恢复体力（+5 HP，免费）' })
       actions.push({ id: 'shop_sell', label: '卖出（打开背包）' })
       emitter.emit('interactable:open', {
         id: 'shop_merchant',
@@ -419,6 +421,11 @@ export default class InteractableSystem {
         return
       }
       emitter.emit('dungeon:toast', { text: '已购买：复活药' })
+      return
+    }
+    if (payload.action === 'shop_heal_5hp') {
+      const ok = world.player?.heal?.(5)
+      emitter.emit('dungeon:toast', { text: ok ? '已恢复：+5 HP' : 'HP 已满' })
       return
     }
     if (String(payload.action).startsWith('farm_claim:')) {

@@ -837,6 +837,20 @@ export default class Player {
     return { applied: true, blocked: false, died: false }
   }
 
+  heal(amount = 1) {
+    if (this.isDead)
+      return false
+    const delta = Math.max(0, Math.floor(Number(amount) || 0))
+    if (delta <= 0)
+      return false
+    const next = Math.min(this.maxHp, this.hp + delta)
+    if (next === this.hp)
+      return false
+    this.hp = next
+    emitter.emit('ui:update_stats', { hp: this.hp, maxHp: this.maxHp, stamina: this.stamina })
+    return true
+  }
+
   _isAttackFromFront(sourcePosition) {
     const p = this.getPosition()
     const dx = sourcePosition.x - p.x

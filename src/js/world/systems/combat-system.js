@@ -102,14 +102,44 @@ export default class CombatSystem {
     const dy = end.y - start.y
     const dz = end.z - start.z
     const d2 = dx * dx + dy * dy + dz * dz
+    const dist = Math.sqrt(Math.max(0, d2))
     if (d2 > maxRange * maxRange) {
       world._materialGunBeam.visible = false
       world.player.setMatterGunAiming(false)
       if (now - (this._rangeWarnAt || 0) >= 1000) {
         this._rangeWarnAt = now
-        emitter.emit('dungeon:toast', { text: '射程不足' })
+        emitter.emit('ui:hud_hint', { text: '射程不足', ttlMs: 1200 })
       }
       return
+    }
+
+    if (!this._losRaycaster)
+      this._losRaycaster = new THREE.Raycaster()
+    this._losRaycaster.far = dist
+    const dir = new THREE.Vector3(dx, dy, dz)
+    if (dir.lengthSq() > 1e-6) {
+      dir.normalize()
+      this._losRaycaster.set(start, dir)
+      const targets = []
+      const chunks = world.chunkManager?.chunks
+      if (chunks?.values) {
+        for (const chunk of chunks.values()) {
+          const g = chunk?.renderer?.group
+          if (g)
+            targets.push(g)
+        }
+      }
+      const hits = targets.length ? this._losRaycaster.intersectObjects(targets, true) : []
+      const first = hits?.[0] || null
+      if (first && typeof first.distance === 'number' && first.distance < dist - 0.25) {
+        world._materialGunBeam.visible = false
+        world.player.setMatterGunAiming(false)
+        if (now - (this._rangeWarnAt || 0) >= 1000) {
+          this._rangeWarnAt = now
+          emitter.emit('ui:hud_hint', { text: '射程不足', ttlMs: 1200 })
+        }
+        return
+      }
     }
 
     world._materialGunBeamPositions[0] = start.x

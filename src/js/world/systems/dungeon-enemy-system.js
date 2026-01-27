@@ -74,10 +74,22 @@ export default class DungeonEnemySystem {
           })
           enemy._isPursuer = true
           const base = Math.max(0.6, Number(enemy.hitRadius) || 0.9)
-          const jitterX = centerX + (Math.random() - 0.5) * 1.8
-          const jitterZ = centerZ + (Math.random() - 0.5) * 1.8
-          const safeX = Math.floor(jitterX) + 0.5
-          const safeZ = Math.floor(jitterZ) + 0.5
+          let safeX = Math.floor(centerX) + 0.5
+          let safeZ = Math.floor(centerZ) + 0.5
+          for (let attempt = 0; attempt < 10; attempt++) {
+            const radius = 18 + Math.random() * 10
+            const theta = Math.random() * Math.PI * 2
+            const x = centerX + Math.cos(theta) * radius
+            const z = centerZ + Math.sin(theta) * radius
+            const px = Math.floor(x) + 0.5
+            const pz = Math.floor(z) + 0.5
+            world.chunkManager?.forceSyncGenerateArea?.(px, pz, 1)
+            if (this.canOccupyAt(px, pz, y, base)) {
+              safeX = px
+              safeZ = pz
+              break
+            }
+          }
           world.chunkManager?.forceSyncGenerateArea?.(safeX, safeZ, 1)
           enemy.group.position.set(safeX, y + 0.1, safeZ)
           if (!this.canOccupyAt(safeX, safeZ, y, base))
@@ -113,6 +125,17 @@ export default class DungeonEnemySystem {
           if (!run.bossKilledAt)
             run.bossKilledAt = now
           run.bossKills = (run.bossKills || 0) + 1
+          if (world._activeDungeonPortalId) {
+            if (!world._portalDungeonProgress)
+              world._portalDungeonProgress = {}
+            world._portalDungeonProgress[world._activeDungeonPortalId] = {
+              ...(world._portalDungeonProgress[world._activeDungeonPortalId] || {}),
+              bossKilled: true,
+              bossKilledAt: Date.now(),
+              updatedAt: Date.now(),
+            }
+            world._savePortalDungeonProgress()
+          }
         }
       }
 

@@ -586,6 +586,11 @@ export default class World {
         if (action === 'return_camazots') {
           emitter.emit('dungeon:death_close_ui')
           this._wipeBackpackKeepCoinAndGun?.()
+          this.experience.camera?.switchMode?.(this.experience.camera?.cameraModes?.THIRD_PERSON)
+          this._stopMaterialGunFire?.()
+          this.isPaused = false
+          this._emitDungeonState()
+          this.experience.pointerLock?.requestLock?.()
           this.player?.respawn?.()
           this._exitDungeon()
         }
@@ -1438,7 +1443,7 @@ export default class World {
           this._nameLabelEntries.splice(i, 1)
         continue
       }
-      const maxDistance = target.userData?._nameLabelMaxDistance ?? 18
+      const maxDistance = Math.min(25, Math.max(0, Number(target.userData?._nameLabelMaxDistance ?? 18) || 0))
       target.getWorldPosition(this._nameLabelTargetPos)
       const d = this._nameLabelCamPos.distanceTo(this._nameLabelTargetPos)
       el.style.display = d > maxDistance ? 'none' : ''
@@ -1708,6 +1713,7 @@ export default class World {
     this._unequipMiningPickaxe()
     this.player?.setControlLocked?.(false)
     this.player?.setSprintDisabled?.(false)
+    this.player?.animation?.playAction?.('Idle', 0.12)
     emitter.emit('mining:end')
 
     if (ore?.mesh) {
@@ -2313,9 +2319,10 @@ export default class World {
   _emitDungeonProgress() {
     if (this.currentWorld !== 'dungeon')
       return
-    const list = this._dungeonInteractables || []
-    const total = list.length
-    const read = list.reduce((sum, item) => sum + (item.read ? 1 : 0), 0)
+    const list = Array.isArray(this._dungeonInteractables) ? this._dungeonInteractables : []
+    const progressList = list.filter(item => !item?.excludeFromProgress)
+    const total = progressList.length
+    const read = progressList.reduce((sum, item) => sum + (item.read ? 1 : 0), 0)
     const completed = this._dungeonCompleted || (total > 0 && read === total)
     const payload = {
       name: this._dungeonName || '',
@@ -2356,12 +2363,21 @@ export default class World {
   }
 
   _emitDungeonState() {
+    const run = this._dungeonRun
+    const bossTotal = Math.max(0, Math.floor(Number(run?.bossTotal) || 0))
+    const bossKills = Math.max(0, Math.floor(Number(run?.bossKills) || 0))
+    const explored = !!this._dungeonCompleted
+    const bossKilled = bossTotal <= 0 ? true : bossKills >= bossTotal
     const payload = {
       currentWorld: this.currentWorld,
       dungeonId: this._activeDungeonPortalId,
       dungeonName: this._dungeonName,
       progress: this._dungeonProgress,
       completed: !!this._dungeonCompleted,
+      bossTotal,
+      bossKills,
+      bossKilled,
+      achievementReady: explored && bossKilled,
       isPaused: !!this.isPaused,
     }
     this._dungeonState = payload
@@ -2852,6 +2868,37 @@ export default class World {
       })
     }
 
+    const achievementChestId = `achievement-chest-${portalId}`
+    const existing = this._lockedChests?.[achievementChestId] || null
+    if (!existing || (existing && !existing.looted && !existing.loot?.itemId)) {
+      const pool = Array.isArray(this._toolLootPool) && this._toolLootPool.length ? this._toolLootPool : ['Axe_Wood']
+      const pick = pool[Math.floor(Math.random() * pool.length)] || pool[0]
+      this._lockedChests[achievementChestId] = {
+        ...(existing || {}),
+        unlocked: true,
+        looted: !!existing?.looted,
+        loot: existing?.loot?.itemId ? existing.loot : { itemId: pick, count: 1 },
+      }
+      this._scheduleLockedChestsSave()
+    }
+    const exit = this._dungeonExit
+    const exitY = Number(exit?.mesh?.position?.y)
+    list.push({
+      id: achievementChestId,
+      title: '成就宝箱',
+      description: '完成地牢成就后可领取奖励。',
+      hint: '探索与击杀完成后可领取',
+      lockedChestId: achievementChestId,
+      requiredKeyId: null,
+      unlocked: true,
+      looted: !!this._lockedChests?.[achievementChestId]?.looted,
+      hidden: true,
+      excludeFromProgress: true,
+      x: Number(exit?.x) || 0,
+      y: Number.isFinite(exitY) ? exitY : (Number(exit?.y) || 0),
+      z: Number(exit?.z) || 0,
+    })
+
     this._dungeonInteractables = list.map((item) => {
       if (item.lockedChestId) {
         const baseY = Math.floor(Number(item.y) || 0)
@@ -2902,6 +2949,8 @@ export default class World {
       else {
         mesh.position.set(item.x, (item.y ?? 0) + 0.5, item.z)
       }
+      if (item.hidden)
+        mesh.visible = false
       this._dungeonInteractablesGroup.add(mesh)
 
       const hitRadius = this._getHitRadiusFromObject(mesh, 0.9)
@@ -2925,7 +2974,7 @@ export default class World {
           })()
         : null
 
-      const range = item.looted ? 0 : (item.lockedChestId ? 3.0 : 2.6)
+      const range = item.hidden ? 0 : (item.looted ? 0 : (item.lockedChestId ? 3.0 : 2.6))
 
       const resolved = {
         ...item,
@@ -2934,7 +2983,7 @@ export default class World {
         hitRadius,
         range,
         read: !!item.looted,
-        spinSpeed: item.lockedChestId ? 0 : 0.01,
+        spinSpeed: item.hidden ? 0 : (item.lockedChestId ? 0 : 0.01),
         parentGroup: this._dungeonInteractablesGroup,
       }
       return resolved
@@ -2943,6 +2992,32 @@ export default class World {
     for (const item of this._dungeonInteractables) {
       if (!item?.lockedChestId)
         continue
+      if (item.hidden)
+        continue
+      this._ensureLockedChestLootVisual(item.id, false)
+    }
+  }
+
+  _updateDungeonAchievementChest() {
+    if (this.currentWorld !== 'dungeon' || !this._activeDungeonPortalId)
+      return
+    const id = `achievement-chest-${this._activeDungeonPortalId}`
+    const list = Array.isArray(this._dungeonInteractables) ? this._dungeonInteractables : []
+    const item = list.find(it => it?.id === id) || null
+    if (!item || item.looted || !item.mesh)
+      return
+    const run = this._dungeonRun
+    const bossTotal = Math.max(0, Math.floor(Number(run?.bossTotal) || 0))
+    const bossKills = Math.max(0, Math.floor(Number(run?.bossKills) || 0))
+    const bossKilled = bossTotal <= 0 ? true : bossKills >= bossTotal
+    const ready = !!this._dungeonCompleted && bossKilled
+    if (!ready)
+      return
+    if (item.hidden) {
+      item.hidden = false
+      item.range = 3.0
+      item.hint = '按 E 打开宝箱'
+      item.mesh.visible = true
       this._ensureLockedChestLootVisual(item.id, false)
     }
   }
@@ -2964,6 +3039,64 @@ export default class World {
         hint: '按 E 打开仓库',
         openInventoryPanel: 'warehouse',
       },
+      ...(() => {
+        const lootPool = [
+          { itemId: 'coin', count: 1, weight: 6 },
+          { itemId: 'coin', count: 3, weight: 3 },
+          { itemId: 'revive_potion', count: 1, weight: 2 },
+          { itemId: 'pet_potion', count: 1, weight: 2 },
+          { itemId: 'key_plains', count: 1, weight: 1 },
+          { itemId: 'key_snow', count: 1, weight: 1 },
+          { itemId: 'key_desert', count: 1, weight: 1 },
+          { itemId: 'key_forest', count: 1, weight: 1 },
+          { itemId: 'key_mine', count: 1, weight: 1 },
+          { itemId: 'key_hellfire', count: 1, weight: 1 },
+        ]
+        const pickLoot = () => {
+          const sum = lootPool.reduce((s, it) => s + (Number(it.weight) || 0), 0)
+          let r = Math.random() * Math.max(1, sum)
+          for (const it of lootPool) {
+            r -= Number(it.weight) || 0
+            if (r <= 0)
+              return { itemId: it.itemId, count: it.count }
+          }
+          return { itemId: 'coin', count: 1 }
+        }
+        const spots = [
+          { id: 'hub-chest-0', x: centerX + 20.5, z: centerZ - 10.5 },
+          { id: 'hub-chest-1', x: centerX - 18.5, z: centerZ - 12.5 },
+          { id: 'hub-chest-2', x: centerX + 8.5, z: centerZ + 26.5 },
+          { id: 'hub-chest-3', x: centerX - 10.5, z: centerZ + 28.5 },
+        ]
+        const out = []
+        for (const spot of spots) {
+          const st = this._lockedChests?.[spot.id] || null
+          if (!st || (st && !st.looted && !st.loot?.itemId)) {
+            const next = pickLoot()
+            this._lockedChests[spot.id] = {
+              ...(st || {}),
+              unlocked: true,
+              looted: !!st?.looted,
+              loot: st?.loot?.itemId ? st.loot : next,
+            }
+            this._scheduleLockedChestsSave()
+          }
+          const state = this._lockedChests?.[spot.id] || {}
+          out.push({
+            id: spot.id,
+            title: '宝箱',
+            description: '一次性拾取奖励。',
+            x: spot.x,
+            z: spot.z,
+            hint: state.looted ? '已开启' : '按 E 打开宝箱',
+            lockedChestId: spot.id,
+            requiredKeyId: null,
+            unlocked: true,
+            looted: !!state.looted,
+          })
+        }
+        return out
+      })(),
     ]
 
     this.interactables = [...items].map((item) => {
@@ -3027,6 +3160,11 @@ export default class World {
         spinSpeed: (item.id === 'warehouse' || item.lockedChestId) ? 0 : 0.01,
       }
     })
+    for (const item of this.interactables) {
+      if (!item?.lockedChestId || item.looted)
+        continue
+      this._ensureLockedChestLootVisual(item.id, true)
+    }
   }
 
   _initHubAutomation() {
@@ -3085,10 +3223,11 @@ export default class World {
       stone: new THREE.MeshStandardMaterial({ color: 0x8B8B8B, roughness: 0.95, metalness: 0.0 }),
       default: new THREE.MeshStandardMaterial({ color: 0xCCCCCC, roughness: 0.9, metalness: 0.0 }),
     }
+    this._spawnHubOneTimePickups()
   }
 
-  _spawnHubDrop(itemId, count, x, z) {
-    return this.dropSystem?.spawnHubDrop?.(itemId, count, x, z) || null
+  _spawnHubDrop(itemId, count, x, z, opts = null) {
+    return this.dropSystem?.spawnHubDrop?.(itemId, count, x, z, opts || undefined) || null
   }
 
   _removeHubDropById(id) {
@@ -3121,6 +3260,52 @@ export default class World {
 
   _updateHubDrops() {
     return this.dropSystem?.updateHubDrops?.()
+  }
+
+  _loadHubOneTimePickups() {
+    try {
+      const raw = window.localStorage?.getItem?.('mmmc:hub_one_time_pickups_v1')
+      const parsed = raw ? JSON.parse(raw) : {}
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    }
+    catch {
+      return {}
+    }
+  }
+
+  _saveHubOneTimePickups(state) {
+    try {
+      window.localStorage?.setItem?.('mmmc:hub_one_time_pickups_v1', JSON.stringify(state || {}))
+    }
+    catch {
+    }
+  }
+
+  _spawnHubOneTimePickups() {
+    const picked = this._loadHubOneTimePickups()
+    const cx = this._hubCenter?.x ?? 0
+    const cz = this._hubCenter?.z ?? 0
+    const spots = [
+      { id: 'hub_coin_0', x: cx + 6.5, z: cz + 10.5 },
+      { id: 'hub_coin_1', x: cx - 8.5, z: cz + 14.5 },
+      { id: 'hub_coin_2', x: cx + 18.5, z: cz - 6.5 },
+      { id: 'hub_coin_3', x: cx - 16.5, z: cz - 4.5 },
+      { id: 'hub_coin_4', x: cx + 3.5, z: cz - 22.5 },
+      { id: 'hub_coin_5', x: cx - 3.5, z: cz + 24.5 },
+      { id: 'hub_coin_6', x: cx + 22.5, z: cz + 22.5 },
+      { id: 'hub_coin_7', x: cx - 22.5, z: cz + 20.5 },
+    ]
+    for (const spot of spots) {
+      if (picked?.[spot.id])
+        continue
+      this._spawnHubDrop('coin', 1, spot.x, spot.z, {
+        persist: true,
+        onPickedUp: () => {
+          picked[spot.id] = true
+          this._saveHubOneTimePickups(picked)
+        },
+      })
+    }
   }
 
   _initAnimals() {
@@ -3157,28 +3342,6 @@ export default class World {
         }
       }
     }
-
-    const merchantX = 36.6
-    const merchantZ = 37.6
-    const bx = Math.floor(merchantX)
-    const bz = Math.floor(merchantZ)
-    const surface = this._getSurfaceY(merchantX, merchantZ)
-    const platformY = Math.floor(Number.isFinite(Number(surface)) ? Number(surface) : 0)
-
-    for (let x = bx - 1; x <= bx + 1; x++) {
-      for (let z = bz - 1; z <= bz + 1; z++) {
-        const s = this._getSurfaceY(x + 0.5, z + 0.5)
-        const sy = Math.floor(Number.isFinite(Number(s)) ? Number(s) : platformY)
-        if (sy < platformY) {
-          for (let y = sy + 1; y < platformY; y++)
-            cm.addBlockWorld?.(x, y, z, blocks.dirt.id)
-        }
-        cm.addBlockWorld?.(x, platformY, z, blocks.woodPlanks.id)
-      }
-    }
-
-    cm.addBlockWorld?.(bx, platformY + 1, bz, blocks.invisibleSolid.id)
-    cm.removeBlockWorld?.(bx, platformY + 2, bz)
   }
 
   _updateAnimals() {
@@ -3279,6 +3442,7 @@ export default class World {
       this._resolvePlayerEnemyCollisions()
       this._resolvePlayerDungeonObjectCollisions()
       this._resolveNonPlayerDynamicCollisions()
+      this._updateDungeonAchievementChest()
     }
     this._updateNameLabelVisibility()
   }

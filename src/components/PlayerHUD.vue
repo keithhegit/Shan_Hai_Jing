@@ -196,7 +196,7 @@ onBeforeUnmount(() => {
 
 .hud-center {
   position: absolute;
-  top: 6.5rem;
+  top: 9rem;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -257,12 +257,12 @@ onBeforeUnmount(() => {
 }
 
 .hud-hint {
-  padding: 4px 10px;
+  padding: 6px 14px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(0, 0, 0, 0.35);
   border-radius: 999px;
   backdrop-filter: blur(6px);
-  font-size: 12px;
+  font-size: 16px;
   color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
 }

@@ -91,8 +91,9 @@ export default class MerchantSystem {
           new THREE.MeshStandardMaterial({ color: 0xFF88CC, roughness: 0.6, metalness: 0 }),
         ))
       }
-      const groundY = world._getSurfaceY?.(this._pos.x, this._pos.z)
-      rabbit.position.set(this._pos.x, (Number.isFinite(Number(groundY)) ? Number(groundY) : this._pos.y), this._pos.z)
+      const surfaceY = world._getSurfaceY?.(this._pos.x, this._pos.z)
+      const groundY = Number.isFinite(Number(surfaceY)) ? (Number(surfaceY) - 0.55) : this._pos.y
+      rabbit.position.set(this._pos.x, groundY, this._pos.z)
       rabbit.rotation.y = Math.PI * 0.5
       rabbit.scale.setScalar(0.475)
 
@@ -103,7 +104,7 @@ export default class MerchantSystem {
         const box = new THREE.Box3().setFromObject(rabbit)
         const dy = Number.isFinite(Number(groundY)) ? (Number(groundY) - box.min.y) : 0
         if (Number.isFinite(dy))
-          rabbit.position.y += dy + 0.02
+          rabbit.position.y += dy - 0.06
       }
       catch {
       }

@@ -16,6 +16,7 @@ const interactablePrompt = ref(null)
 const interactableModal = ref(null)
 const loadingState = ref(null)
 const dungeonProgress = ref(null)
+const dungeonState = ref(null)
 const dungeonToast = ref(null)
 let dungeonToastTimer = null
 const dungeonTimer = ref(null)
@@ -140,6 +141,17 @@ const miningPct = computed(() => {
   return Math.max(0, Math.min(1, raw))
 })
 
+const dungeonActivity = computed(() => {
+  const s = dungeonState.value
+  if (!s || s.currentWorld !== 'dungeon')
+    return null
+  return {
+    explored: !!s.completed,
+    bossKilled: !!s.bossKilled,
+    ready: !!s.achievementReady,
+  }
+})
+
 function triggerQuickHotkey(key) {
   const k = String(key || '')
   if (!k)
@@ -247,6 +259,10 @@ function onDungeonMeshReady() {
 
 function onDungeonProgress(payload) {
   dungeonProgress.value = payload
+}
+
+function onDungeonState(payload) {
+  dungeonState.value = payload || null
 }
 
 function onDungeonProgressClear() {
@@ -386,7 +402,7 @@ function chooseDeathAction(action) {
   if (act === 'respawn_potion') {
     const potions = Math.max(0, Math.floor(Number(inventoryData.value?.backpack?.revive_potion) || 0))
     if (potions <= 0) {
-      emitter.emit('dungeon:toast', { text: '复活药库存不足' })
+      deathConfirm.value = { action: null, title: '提示', message: '复活药库存不足' }
       return
     }
     deathConfirm.value = { action: act, title: '嗑药重生', message: '背包不清零，但是消耗背包里的复活药道具。' }
@@ -939,10 +955,10 @@ function onGridPointerUp(event) {
       const inside = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom
       if (inside) {
         const item = gridFindItem(drag.uid)
-        if (item)
-          transferItem('backpack', 'warehouse', item.itemId, 1)
         gridDrag.value = null
         gridHover.value = null
+        if (item)
+          transferItem('backpack', 'warehouse', item.itemId, 1)
         return
       }
     }
@@ -1012,10 +1028,10 @@ function onWarehousePointerUp(event) {
       const inside = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom
       if (inside) {
         const item = warehouseFindItem(drag.uid)
-        if (item)
-          transferItem('warehouse', 'backpack', item.itemId, 1)
         gridDrag.value = null
         warehouseHover.value = null
+        if (item)
+          transferItem('warehouse', 'backpack', item.itemId, 1)
         return
       }
     }
@@ -1150,6 +1166,7 @@ onMounted(() => {
   emitter.on('loading:hide', onLoadingHide)
   emitter.on('loading:dungeon_mesh_ready', onDungeonMeshReady)
   emitter.on('dungeon:progress', onDungeonProgress)
+  emitter.on('dungeon:state', onDungeonState)
   emitter.on('dungeon:progress_clear', onDungeonProgressClear)
   emitter.on('dungeon:timer', onDungeonTimer)
   emitter.on('ui:coords', onCoords)
@@ -1185,6 +1202,7 @@ onBeforeUnmount(() => {
   emitter.off('loading:hide', onLoadingHide)
   emitter.off('loading:dungeon_mesh_ready', onDungeonMeshReady)
   emitter.off('dungeon:progress', onDungeonProgress)
+  emitter.off('dungeon:state', onDungeonState)
   emitter.off('dungeon:progress_clear', onDungeonProgressClear)
   emitter.off('dungeon:timer', onDungeonTimer)
   emitter.off('ui:coords', onCoords)
@@ -1224,6 +1242,27 @@ onBeforeUnmount(() => {
     <Crosshair />
     <!-- 小地图 (z-index: 1000) -->
     <MiniMap />
+    <div
+      v-if="!portalSelectModal && !interactableModal && !chestModal && !inventoryPanel && !loadingState && !extractionModal && !deathModal && dungeonActivity"
+      class="pointer-events-none absolute left-4 top-[9.25rem] z-[1750] w-[260px]"
+    >
+      <div class="rounded-2xl border border-white/20 bg-black/35 px-4 py-3 text-white shadow-xl backdrop-blur-md">
+        <div class="text-xs font-bold opacity-90">
+          地牢要素
+        </div>
+        <div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold">
+          <div>
+            线索：<span :class="dungeonActivity.explored ? 'text-emerald-200' : 'text-white/80'">{{ dungeonActivity.explored ? '已探索' : '未探索' }}</span>
+          </div>
+          <div>
+            击杀：<span :class="dungeonActivity.bossKilled ? 'text-emerald-200' : 'text-white/80'">{{ dungeonActivity.bossKilled ? '已击杀' : '未击杀' }}</span>
+          </div>
+        </div>
+        <div v-if="dungeonActivity.ready" class="mt-2 text-[11px] font-semibold text-white/90">
+          地牢成就100%完成，请在传送门处获取成就宝箱奖励。
+        </div>
+      </div>
+    </div>
     <div
       v-if="!portalSelectModal && !interactableModal && !chestModal && !inventoryPanel && !loadingState && !extractionModal && !deathModal && dungeonTimer"
       class="pointer-events-none absolute left-1/2 top-4 z-[1900] -translate-x-1/2 px-4"
@@ -1523,6 +1562,7 @@ onBeforeUnmount(() => {
                 关闭
               </button>
               <button
+                v-if="deathConfirm.action"
                 class="rounded-lg border border-emerald-300/30 bg-emerald-500/20 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500/25"
                 @click="confirmDeathAction"
               >
@@ -2168,7 +2208,7 @@ onBeforeUnmount(() => {
           :key="`qhud:${i}:${slot?.kind || 'none'}:${slot?.entry?.uid || slot?.itemId || 'empty'}:${slot?.entry?.metaIndex ?? -1}`"
           class="relative h-12 w-12 rounded-xl border border-white/15 bg-white/10 p-1 hover:bg-white/15 disabled:opacity-40"
           :disabled="!slot?.enabled"
-          @click="slot?.kind === 'weapon' ? triggerQuickHotkey('1') : (slot?.kind === 'canister' ? quickCanisterPick(slot.entry) : (slot?.kind === 'build' ? equipItem(slot.itemId) : null))"
+          @click="slot?.kind === 'weapon' ? triggerQuickHotkey('1') : (slot?.kind === 'canister' ? quickCanisterPick(slot.entry) : (slot?.kind === 'build' || slot?.kind === 'tool' ? equipItem(slot.itemId) : null))"
         >
           <div class="absolute left-1 top-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white/90">
             {{ quickHudKeys[i] }}
@@ -2192,12 +2232,18 @@ onBeforeUnmount(() => {
             :src="slot.iconSrc"
             alt="build"
           >
+          <img
+            v-else-if="slot?.kind === 'tool' && slot?.iconSrc"
+            class="h-full w-full rounded-lg border border-black/40 object-contain p-1"
+            :src="slot.iconSrc"
+            alt="tool"
+          >
           <div
             v-else
             class="flex h-full w-full items-center justify-center rounded-lg border border-white/10 text-[10px] font-semibold"
             :class="slot?.entry?.exhausted ? 'opacity-60 grayscale' : 'opacity-80'"
           >
-            {{ slot?.kind === 'weapon' ? '灵兽石' : (slot?.kind === 'build' ? itemLabel(slot.itemId) : (slot?.entry ? itemLabel(slot.entry.itemId) : '')) }}
+            {{ slot?.kind === 'weapon' ? '灵兽石' : (slot?.kind === 'build' || slot?.kind === 'tool' ? itemLabel(slot.itemId) : (slot?.entry ? itemLabel(slot.entry.itemId) : '')) }}
           </div>
         </button>
       </div>
