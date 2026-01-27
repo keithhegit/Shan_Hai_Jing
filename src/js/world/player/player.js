@@ -857,11 +857,14 @@ export default class Player {
   respawn() {
     this.isDead = false
     this.isBlocking = false
+    this.setControlLocked(false)
+    this.setSprintDisabled(false)
     this.hp = this.maxHp
     this.stamina = this.maxStamina
     emitter.emit('ui:update_stats', { hp: this.hp, maxHp: this.maxHp, stamina: this.stamina })
     emitter.emit('ui:hide_cta')
     emitter.emit('game:resume')
+    this.animation?.playAction?.(AnimationClips.IDLE, 0.1)
 
     const target = this.movement?.config?.respawn?.position
     if (target) {

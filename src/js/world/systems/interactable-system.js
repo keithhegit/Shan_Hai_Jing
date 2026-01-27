@@ -213,6 +213,7 @@ export default class InteractableSystem {
         world._toggleInventoryPanel(world._activeInteractable.openInventoryPanel)
         emitter.emit('interactable:prompt_clear')
         emitter.emit('portal:prompt_clear')
+        return
       }
 
       if (world._activeInteractable.lockedChestId) {
@@ -258,6 +259,7 @@ export default class InteractableSystem {
           actions.push({ id: 'shop_noop', label: '地狱火：已解锁' })
         actions.push({ id: 'shop_buy:pickaxe', label: '购买：鹤嘴镐（5 金币）' })
         actions.push({ id: 'shop_buy:pet_potion', label: '兑换：灵兽补充剂（3 水晶碎片）' })
+        actions.push({ id: 'shop_buy:revive_potion', label: '购买：复活药（5 水晶碎片）' })
         actions.push({ id: 'shop_sell', label: '卖出（打开背包）' })
         payload.actions = actions
       }
@@ -352,6 +354,7 @@ export default class InteractableSystem {
         actions.push({ id: 'shop_noop', label: '地狱火：已解锁' })
       actions.push({ id: 'shop_buy:pickaxe', label: '购买：鹤嘴镐（5 金币）' })
       actions.push({ id: 'shop_buy:pet_potion', label: '兑换：灵兽补充剂（3 水晶碎片）' })
+      actions.push({ id: 'shop_buy:revive_potion', label: '购买：复活药（5 水晶碎片）' })
       actions.push({ id: 'shop_sell', label: '卖出（打开背包）' })
       emitter.emit('interactable:open', {
         id: 'shop_merchant',
@@ -397,6 +400,25 @@ export default class InteractableSystem {
         return
       }
       emitter.emit('dungeon:toast', { text: '已兑换：灵兽补充剂' })
+      return
+    }
+    if (payload.action === 'shop_buy:revive_potion') {
+      const ok = world.inventorySystem?.removeItem?.('backpack', 'crystal_small', 5)
+      if (!ok) {
+        emitter.emit('dungeon:toast', { text: '水晶碎片不足' })
+        return
+      }
+      const canAdd = world.inventorySystem?._canAddToBackpack?.('revive_potion', 1) ?? true
+      if (canAdd) {
+        world.inventorySystem?.addItem?.('backpack', 'revive_potion', 1)
+      }
+      else {
+        const p = world.player?.getPosition?.()
+        world._spawnHubDrop?.('revive_potion', 1, p?.x ?? 0, p?.z ?? 0)
+        emitter.emit('dungeon:toast', { text: '背包已满：已掉落在地上' })
+        return
+      }
+      emitter.emit('dungeon:toast', { text: '已购买：复活药' })
       return
     }
     if (String(payload.action).startsWith('farm_claim:')) {

@@ -44,6 +44,7 @@ const chestModal = ref(null)
 const portalSelectModal = ref(null)
 const extractionModal = ref(null)
 const deathModal = ref(null)
+const deathConfirm = ref(null)
 const miningProgress = ref(null)
 const miningNow = ref(0)
 let miningRaf = null
@@ -361,13 +362,38 @@ function onDeathOpen(payload) {
 
 function onDeathCloseUi() {
   deathModal.value = null
+  deathConfirm.value = null
+}
+
+function cancelDeathConfirm() {
+  deathConfirm.value = null
+}
+
+function confirmDeathAction() {
+  const payload = deathConfirm.value
+  if (!payload?.action)
+    return
+  const action = String(payload.action)
+  deathConfirm.value = null
+  deathModal.value = null
+  emitter.emit('dungeon:death_action', { action })
 }
 
 function chooseDeathAction(action) {
   if (!deathModal.value || !action)
     return
-  deathModal.value = null
-  emitter.emit('dungeon:death_action', { action })
+  const act = String(action)
+  if (act === 'respawn_potion') {
+    const potions = Math.max(0, Math.floor(Number(inventoryData.value?.backpack?.revive_potion) || 0))
+    if (potions <= 0) {
+      emitter.emit('dungeon:toast', { text: '复活药库存不足' })
+      return
+    }
+    deathConfirm.value = { action: act, title: '嗑药重生', message: '背包不清零，但是消耗背包里的复活药道具。' }
+  }
+  else if (act === 'return_camazots') {
+    deathConfirm.value = { action: act, title: '返回 Camazots', message: '背包清零，只保留金币和灵兽石。' }
+  }
 }
 
 function closeInteractableModal() {
@@ -580,6 +606,8 @@ function itemLabel(id) {
     return '灵兽石'
   if (id === 'pet_potion')
     return '灵兽补充剂'
+  if (id === 'revive_potion')
+    return '复活药'
   if (id === 'canister_small')
     return '收容罐（小）'
   if (id === 'canister_medium')
@@ -610,6 +638,8 @@ function itemDescription(id) {
     return '建造道具。可在建造模式放置/拆除围栏。'
   if (id === 'pet_potion')
     return '消耗品。用于恢复精疲力竭的灵兽。'
+  if (id === 'revive_potion')
+    return '消耗品。用于死亡后嗑药重生（背包不清零）。'
   if (String(id).startsWith('key_'))
     return '钥匙。用于解锁对应地牢的上锁宝箱。'
   if (String(id).startsWith('canister_'))
@@ -791,7 +821,7 @@ function selectGridItem(uid) {
     else if (itemId.startsWith('Axe_')) {
       price = 3
     }
-    else if (itemId === 'crystal_small' || itemId.startsWith('key_')) {
+    else if (itemId === 'crystal_small' || itemId === 'crystal_big' || itemId === 'revive_potion' || itemId.startsWith('key_')) {
       reason = '不可卖出'
     }
     else {
@@ -808,7 +838,7 @@ function openDiscardConfirmByUid(uid) {
   const item = gridFindItem(uid)
   if (!item)
     return
-  const isStack = item.itemId === 'coin' || String(item.itemId).startsWith('key_')
+  const isStack = item.itemId === 'coin' || item.itemId === 'crystal_small' || item.itemId === 'crystal_big' || item.itemId === 'revive_potion' || String(item.itemId).startsWith('key_')
   const amount = Math.max(1, Math.min(isStack ? 1 : 1, Math.floor(Number(item.count) || 1)))
   discardConfirm.value = { uid: item.uid, itemId: item.itemId, count: item.count, amount }
 }
@@ -1010,6 +1040,8 @@ function gridItemBaseIconSrc(itemId) {
   const id = raw.replace(/\.(gltf|glb)$/i, '')
   if (id === 'coin')
     return '/img/icons/coin.jpg'
+  if (id === 'revive_potion')
+    return '/img/icons/Potion1_Filled_Red.jpg'
   if (id === 'crystal_small')
     return '/img/icons/crystal_small.jpg'
   if (id === 'crystal_big')
@@ -1436,7 +1468,7 @@ onBeforeUnmount(() => {
       v-if="deathModal && !loadingState"
       class="absolute inset-0 z-[9600] flex items-center justify-center bg-black/90 px-4"
     >
-      <div class="w-full max-w-[720px] rounded-2xl border border-white/15 bg-white/10 p-6 text-white shadow-2xl backdrop-blur-md">
+      <div class="relative w-full max-w-[720px] rounded-2xl border border-white/15 bg-white/10 p-6 text-white shadow-2xl backdrop-blur-md">
         <div class="text-3xl font-extrabold tracking-widest text-white">
           你死了
         </div>
@@ -1471,25 +1503,47 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <div
+          v-if="deathConfirm"
+          class="absolute inset-0 z-20 flex items-center justify-center rounded-2xl bg-black/60 px-4 backdrop-blur-sm"
+          @click.self="cancelDeathConfirm"
+        >
+          <div class="w-full max-w-[520px] rounded-2xl border border-white/20 bg-white/15 p-4 shadow-2xl backdrop-blur-md">
+            <div class="text-sm font-bold text-white/90">
+              {{ deathConfirm.title }}
+            </div>
+            <div class="mt-2 text-sm opacity-90">
+              （{{ deathConfirm.message }}）
+            </div>
+            <div class="mt-4 flex items-center justify-end gap-2">
+              <button
+                class="rounded-lg border border-white/20 bg-black/30 px-3 py-1.5 text-sm font-semibold text-white hover:bg-black/40"
+                @click="cancelDeathConfirm"
+              >
+                关闭
+              </button>
+              <button
+                class="rounded-lg border border-emerald-300/30 bg-emerald-500/20 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-500/25"
+                @click="confirmDeathAction"
+              >
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="mt-6 flex flex-wrap items-center justify-end gap-3">
           <button
-            v-if="deathModal.reviveItemId"
-            class="rounded-xl border border-white/20 bg-white/15 px-5 py-2 text-sm font-semibold text-white hover:bg-white/20"
-            @click="chooseDeathAction('respawn_noloss')"
-          >
-            无损重生（消耗灵勾玉）
-          </button>
-          <button
             class="rounded-xl border border-white/20 bg-red-500/35 px-5 py-2 text-sm font-semibold text-white hover:bg-red-500/45"
-            @click="chooseDeathAction('respawn_lossy')"
+            @click="chooseDeathAction('respawn_potion')"
           >
-            重生（丢失背包）
+            嗑药重生（背包不清零）
           </button>
           <button
             class="rounded-xl border border-white/20 bg-white/10 px-5 py-2 text-sm font-semibold text-white hover:bg-white/15"
-            @click="chooseDeathAction('restart')"
+            @click="chooseDeathAction('return_camazots')"
           >
-            重来（清零）
+            返回 Camazots（清零）
           </button>
         </div>
       </div>

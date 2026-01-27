@@ -568,23 +568,27 @@ export default class World {
         const action = payload?.action
         if (!action)
           return
-        if (action === 'respawn_noloss') {
-          const ok = this._consumeReviveItem()
-          if (!ok)
-            this._wipeBackpackKeepTool()
-        }
-        else if (action === 'respawn_lossy') {
-          this._wipeBackpackKeepTool()
-        }
-        else if (action === 'restart') {
-          this._restartDungeonRun()
+        if (action === 'respawn_potion') {
+          const ok = this._consumeRevivePotion?.()
+          if (!ok) {
+            emitter.emit('dungeon:toast', { text: '复活药库存不足' })
+            this._openDungeonDeathUi?.('death')
+            return
+          }
+          emitter.emit('dungeon:death_close_ui')
+          this.experience.camera?.switchMode?.(this.experience.camera?.cameraModes?.THIRD_PERSON)
+          this.isPaused = false
+          this._emitDungeonState()
+          this.experience.pointerLock?.requestLock?.()
+          this.player?.respawn?.()
           return
         }
-        emitter.emit('dungeon:death_close_ui')
-        this.experience.camera?.switchMode?.(this.experience.camera?.cameraModes?.THIRD_PERSON)
-        this.player?.setControlLocked?.(false)
-        this.player?.setSprintDisabled?.(false)
-        this.player?.respawn?.()
+        if (action === 'return_camazots') {
+          emitter.emit('dungeon:death_close_ui')
+          this._wipeBackpackKeepCoinAndGun?.()
+          this.player?.respawn?.()
+          this._exitDungeon()
+        }
       }
       emitter.on('dungeon:extraction_action', this._onDungeonExtractionAction)
       emitter.on('dungeon:death_action', this._onDungeonDeathAction)
@@ -1002,7 +1006,7 @@ export default class World {
       if (!ok)
         return
     }
-    else if (id === 'crystal_small' || id.startsWith('key_')) {
+    else if (id === 'crystal_small' || id === 'revive_potion' || id.startsWith('key_')) {
       emitter.emit('dungeon:toast', { text: '不可卖出该道具' })
       return
     }
@@ -2510,20 +2514,37 @@ export default class World {
     return true
   }
 
-  _hasReviveItem() {
-    const ids = ['magatama', 'linggouyu', 'spirit_magatama']
-    for (const id of ids) {
-      if ((this._inventory?.backpack?.items?.[id] || 0) > 0)
-        return id
-    }
-    return null
+  _wipeBackpackKeepCoinAndGun() {
+    const inv = this.inventorySystem?.inventory
+    if (!inv)
+      return false
+    const coin = Math.max(0, Math.floor(Number(inv?.backpack?.items?.coin || 0)))
+    const keepId = 'material_gun'
+    const keepCount = Math.max(1, Math.floor(Number(inv?.backpack?.items?.[keepId] || 1)))
+    if (!inv.backpack)
+      inv.backpack = { items: {} }
+    const items = { [keepId]: keepCount }
+    if (coin > 0)
+      items.coin = coin
+    inv.backpack.items = items
+    if (!inv.gridLayouts)
+      inv.gridLayouts = { backpack: {}, warehousePages: [] }
+    inv.gridLayouts.backpack = {}
+    this._selectedCanisterItemId = null
+    this._selectedCanisterMetaIndex = null
+    this._emitInventorySummary()
+    this._emitInventoryState()
+    this._applyBurdenEffects?.()
+    this._updateCanisterVisuals?.()
+    this._scheduleInventorySave()
+    return true
   }
 
-  _consumeReviveItem() {
-    const id = this._hasReviveItem()
-    if (!id)
+  _consumeRevivePotion() {
+    const count = Math.max(0, Math.floor(Number(this._inventory?.backpack?.items?.revive_potion || 0)))
+    if (count <= 0)
       return false
-    return !!this._removeInventoryItem?.('backpack', id, 1)
+    return !!this._removeInventoryItem?.('backpack', 'revive_potion', 1)
   }
 
   _restartDungeonRun() {
@@ -2536,6 +2557,7 @@ export default class World {
     this.experience.pointerLock?.exitLock?.()
     this._emitDungeonState()
     this._restoreBackpackSnapshot(run.inventorySnapshot)
+    this.player?.respawn?.()
     this._ignorePortalDungeonProgressOnce = true
     emitter.emit('loading:show', { title: '正在重来：地牢重置中', kind: 'dungeon-restart' })
     setTimeout(() => {
@@ -2556,11 +2578,9 @@ export default class World {
     this.experience.pointerLock?.exitLock?.()
     this._emitDungeonState()
     const summary = this._buildDungeonRunSummary()
-    const reviveItemId = this._hasReviveItem()
     emitter.emit('dungeon:death_open', {
       dungeonName: this._dungeonName || '',
       reason: reason || 'death',
-      reviveItemId,
       ...summary,
     })
   }
@@ -3158,7 +3178,7 @@ export default class World {
     }
 
     cm.addBlockWorld?.(bx, platformY + 1, bz, blocks.invisibleSolid.id)
-    cm.addBlockWorld?.(bx, platformY + 2, bz, blocks.invisibleSolid.id)
+    cm.removeBlockWorld?.(bx, platformY + 2, bz)
   }
 
   _updateAnimals() {

@@ -22,7 +22,8 @@ export default class InventorySystem {
       ],
       itemSizes: {
         coin: { w: 1, h: 1 },
-        material_gun: { w: 2, h: 4 },
+        material_gun: { w: 1, h: 2 },
+        revive_potion: { w: 1, h: 1 },
         key_plains: { w: 1, h: 2 },
         key_snow: { w: 1, h: 2 },
         key_desert: { w: 1, h: 2 },
@@ -54,6 +55,7 @@ export default class InventorySystem {
         stone: 1,
         fence: 4,
         coin: 0,
+        revive_potion: 1,
         crystal_big: 6,
         crystal_small: 3,
         pet_potion: 1,
@@ -388,7 +390,7 @@ export default class InventorySystem {
       return
 
     const itemId = found.itemId
-    const isStack = itemId === 'coin' || itemId === 'crystal_small' || itemId === 'crystal_big' || String(itemId).startsWith('key_')
+    const isStack = itemId === 'coin' || itemId === 'crystal_small' || itemId === 'crystal_big' || itemId === 'revive_potion' || String(itemId).startsWith('key_')
     const available = Math.max(1, Math.floor(Number(found.count) || 1))
     const dropCount = isStack ? Math.min(available, amount) : 1
 
@@ -700,7 +702,7 @@ export default class InventorySystem {
       const size = sizes?.[id] || { w: 1, h: 1 }
       const w = Math.max(1, Math.floor(Number(size.w) || 1))
       const h = Math.max(1, Math.floor(Number(size.h) || 1))
-      const isStack = id === 'coin' || id === 'crystal_small' || id === 'crystal_big' || String(id).startsWith('key_')
+      const isStack = id === 'coin' || id === 'crystal_small' || id === 'crystal_big' || id === 'revive_potion' || String(id).startsWith('key_')
       if (isStack) {
         expanded.push({
           uid: `${id}:${seq++}`,

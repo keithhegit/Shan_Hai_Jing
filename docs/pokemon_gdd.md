@@ -255,7 +255,10 @@
   - 置灰收容罐（exhausted）= 1 Gold
   - 可投掷收容罐：小=1 / 中=2 / 大=3 Gold
   - 工具（`Axe_*`、`Pickaxe_*`）= 3 Gold
-  - `crystal_small` 与 `key_*` 不可卖出（按钮置灰）
+- `crystal_small` / `crystal_big` / `revive_potion` / `key_*` 不可卖出（按钮置灰）
+- 购买：复活药（`revive_potion`）= 5 `crystal_small`
+  - Icon：`img/icons/Potion1_Filled_Red.jpg`
+  - 不可进入快捷栏 1-0（仅用于死亡结算“嗑药重生”）
 
 验收口径：
 
@@ -283,6 +286,21 @@
   - 手持模型方向：镐头朝外（如资产默认朝向相反，则对模型做 180° 翻转）
   - 显示挖矿进度条 5 秒；5 秒内主控不能做其他动作
   - 完成后获得 1 个道具 `crystal_small`（Icon `img/icons/crystal_small.jpg`）
+
+### 2.11 死亡结算与复活药
+
+死亡结算界面（你死了）提供两种选择，点击后必须二次确认（弹窗提供 **确定 / 关闭**）：
+
+- **嗑药重生**（背包不清零）
+  - 判断背包内是否有 `revive_potion`，有则消耗 1 个并在出生点复活
+  - 若没有复活药：提示“复活药库存不足”，不执行重生
+- **返回 Camazots**（清零）
+  - 回到 Hub（Camazots）
+  - 背包清零，仅保留：`coin`、`material_gun`
+
+验收口径：
+
+- 选择任一分支后，主控不再循环 `death` 动画，且能正常移动与战斗
 
 验收口径：
 
@@ -332,6 +350,7 @@
 | `Pickaxe_Wood`  | `tool`       | 1×2      | `img/icons/Pickaxe.jpg`          | 商店购买；用于挖矿       |
 | `crystal_small` | `material`   | 1×1      | `img/icons/crystal_small.jpg`    | 挖矿产物；也用于兑换     |
 | `pet_potion`    | `consumable` | 1×1      | `img/icons/Potion2_Filled.jpg`   | 恢复灵兽；替代金币恢复   |
+| `revive_potion` | `consumable` | 1×1      | `img/icons/Potion1_Filled_Red.jpg` | 死亡后嗑药重生；不可卖出 |
 | `Fence_Center`  | `build`      | 1×1      | `img/icons/Fence_Center.jpg`     | 牧场仓库领取；用于建造   |
 | `Fence_Corner`  | `build`      | 1×1      | `img/icons/Fence_Corner.jpg`     | 牧场仓库领取；用于建造   |
 
@@ -377,7 +396,7 @@
 | NPC（可捕捉）        | `npcId` / `resourceKey`            | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`                  | `captureCanisterId`（默认 `canister_small`）  | 捕捉产物：1×2          | `img/icons/canister_small.png`  | 64×128                                   |
 | Minion（可捕捉）     | `enemyId` / `type` / `resourceKey` | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`                  | `captureCanisterId`（默认 `canister_medium`） | 捕捉产物：2×2          | `img/icons/canister_medium.png` | 128×128                                  |
 | Boss（可捕捉）       | `bossId` / `type` / `resourceKey`  | `maxHp`, `attackDamage`, `moveSpeed`, `aggroRange`, `attackRange`, `windupMs`, `hitRadius`, `phase`（可选） | `captureCanisterId`（默认 `canister_large`）  | 捕捉产物：3×3          | `img/icons/canister_large.png`  | 192×192                                  |
-| 其他道具（Item）     | `itemId` / `resourceKey`           | `type`, `stackable`, `maxStack`（可选）, `weight`, `rarity`（可选）                                         | `dropRate` / `lootTableId`（可选）            | 例：`material_gun` 2×4 | `img/icons/{itemId}.png`        | 2×4 → 128×256；1×1 → 64×64；1×2 → 64×128 |
+| 其他道具（Item）     | `itemId` / `resourceKey`           | `type`, `stackable`, `maxStack`（可选）, `weight`, `rarity`（可选）                                         | `dropRate` / `lootTableId`（可选）            | 例：`material_gun` 1×2 | `img/icons/{itemId}.png`        | 2×4 → 128×256；1×1 → 64×64；1×2 → 64×128 |
 | 消耗品（Consumable） | `itemId` / `resourceKey`           | `stackable`, `maxStack`, `cooldownMs`（可选）, `useEffectId` / `effectValue`                                | `useConsumes`（是否消耗）                     | 建议 1×1 或 1×2        | `img/icons/{itemId}.png`        | 1×1 → 64×64；1×2 → 64×128                |
 
 如果你后续给我一批 icon，我会按这张表的 `Icon_img` 路径约定把它们接进背包/仓库网格渲染，并把现有 SVG 占位替换为图片。
@@ -549,7 +568,7 @@ Dungeon 捕捉产出规则（当前实现）：
 ## 7. 验收走查清单（快速）
 
 1. Hub 中装备 `material_gun` 后，水晶挂到右手，尺寸正常；主控保持 holding-both Pose（移动时权重降低但不突兀）
-2. 中键锁定最近目标：相机进入锁定镜头，目标脚下出现红色圆环，屏幕出现暗角
+2. 中键锁定最近目标：相机保持默认尾追视角，目标脚下出现红色圆环，屏幕出现暗角
 3. 锁定时目标头顶显示血条；解除锁定时血条隐藏、暗角消失、圆环隐藏
 4. 锁定目标死亡：自动解除锁定，不残留锁定视觉
 
@@ -786,7 +805,7 @@ Dungeon 捕捉产出规则（当前实现）：
 | ------------- | ---------------------------------------------- | -------------: | :----------: | ----------------------------------------------------------------- |
 | 货币          | `coin`                                         |            1×1 |      否      | Stack，网格里只放 1 个代表格                                      |
 | 钥匙          | `key_plains` 等                                |            1×2 |      是      | 若保持 Stack，则网格代表格 1×2；若改 Instance，则每把钥匙单独占格 |
-| 武器（主手）  | `material_gun`                                 |            2×4 |      是      | 你的设想：视觉上更像“长物件”                                      |
+| 武器（主手）  | `material_gun`                                 |            1×2 |      是      | 竖置；用于快速装备与锁定射线战斗                                   |
 | 工具/武器掉落 | `Sword_*` / `Axe_*` / `Pickaxe_*` / `Shovel_*` |            2×4 |      是      | 第一版统一 2×4，后续再区分长短                                    |
 | 灵兽罐（小）  | `canister_small`                               |            1×2 |      是      | 作为“轻量战利品”，给背包带来轻压力                                |
 | 灵兽罐（中）  | `canister_medium`                              |            2×2 |      是      | 把“抓到一只怪”的空间压力做得更明显                                |
